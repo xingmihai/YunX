@@ -108,8 +108,10 @@ jobs:
           "$APKSIGNER" verify app-release-signed.apk
           # 断言：确认签名确为指定密钥，防止 Secrets 缺失时静默回退
           ACTUAL=$("$APKSIGNER" verify --print-certs app-release-signed.apk \
-            | grep -m1 'SHA-256' | sed -E 's/.*: *//' | tr -d ' ')
-          EXPECTED="2C:27:9D:78:D7:A5:6F:D1:CD:43:88:72:4B:47:9B:0E:6D:43:24:B8:53:74:4A:88:4B:EE:89:A9:63:D5:DA:31"
+            | grep -m1 'SHA-256 digest' | sed -E 's/.*digest: *//' \
+            | tr -d ':' | tr 'A-Z' 'a-z')
+          EXPECTED=$(echo "2c279d78d7a56fd1cd4388724b479b0e6d4324b853744a884bee89a963d5da31" | tr 'a-z' 'A-Z' | tr -d ':')
+          EXPECTED=$(echo "2c279d78d7a56fd1cd4388724b479b0e6d4324b853744a884bee89a963d5da31")
           echo "签名证书 SHA-256: $ACTUAL"
           if [ "$ACTUAL" != "$EXPECTED" ]; then
             echo "::error::签名证书不匹配，期望 $EXPECTED"
