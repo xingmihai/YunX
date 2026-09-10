@@ -32,6 +32,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    # 项目默认走阿里云镜像，在 GitHub Actions 里会 502；设为 false 走 Google/Maven Central 官方源
+    env:
+      YUNX_USE_MIRROR: "false"
 
     steps:
       - name: 检出代码
