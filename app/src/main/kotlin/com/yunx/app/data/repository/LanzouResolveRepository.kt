@@ -54,8 +54,8 @@ class LanzouResolveRepository : ShareResolveRepository {
                 isFolder = true,
                 pwd = effectivePwd,
                 folderFileId = folderFileId,
-                t = LanzouShareConstants.T_REGEX.find(html)?.groupValues?.getOrNull(1).orEmpty(),
-                k = LanzouShareConstants.K_REGEX.find(html)?.groupValues?.getOrNull(1).orEmpty(),
+                t = LanzouShareConstants.extractT(html),
+                k = LanzouShareConstants.extractK(html),
                 puid = LanzouShareConstants.PUID_REGEX.find(html)?.groupValues?.getOrNull(1).orEmpty(),
                 uid = LanzouShareConstants.UID_REGEX.find(html)?.groupValues?.getOrNull(1).orEmpty()
             )
@@ -66,13 +66,60 @@ class LanzouResolveRepository : ShareResolveRepository {
         return Result.success(ShareSession(shareId, data.encode(), title.ifBlank { "蓝奏云分享" }))
     }
 
+    /**
+     * 从分享页 HTML 解析出会话数据（t / k / puid / uid / folderFileId 等）。
+     *
+     * ★ 单独抽出：t 只有约 10 分钟有效期，过期后需要**重新拉一次页面**
+     *   取新的 t，这条路径要被首次解析和过期重试共用。
+     */
+    private fun parseSessionData(host: String, shareId: String, pwd: String, html: String): LanzouShareSessionData {
+        val folderFileId = LanzouShareConstants.FOLDER_FILE_ID_REGEX.find(html)
+            ?.groupValues?.getOrNull(1).orEmpty()
+        return if (folderFileId.isNotBlank()) {
+            LanzouShareSessionData(
+                host = host,
+                shareId = shareId,
+                isFolder = true,
+                pwd = pwd,
+                folderFileId = folderFileId,
+                t = LanzouShareConstants.extractT(html),
+                k = LanzouShareConstants.extractK(html),
+                puid = LanzouShareConstants.PUID_REGEX.find(html)?.groupValues?.getOrNull(1).orEmpty(),
+                uid = LanzouShareConstants.UID_REGEX.find(html)?.groupValues?.getOrNull(1).orEmpty()
+            )
+        } else {
+            LanzouShareSessionData(host = host, shareId = shareId, isFolder = false, pwd = pwd)
+        }
+    }
+
+    /**
+     * t 是否已过期。
+     *
+     * ★ t 是服务端下发的时间戳，实测有效期约 600 秒。过期后
+     *   filemoreajax.php 会拒绝请求（返回「请刷新，重试0」这类文案）。
+     */
+    private fun isExpired(data: LanzouShareSessionData): Boolean {
+        val t = data.t.toLongOrNull() ?: return false
+        return t * 1000 <= System.currentTimeMillis()
+    }
+
     override suspend fun listFiles(
         session: ShareSession,
         dirFid: String,
         cookie: String
     ): Result<List<ShareFile>> {
-        val data = LanzouShareSessionData.decode(session.stoken)
+        var data = LanzouShareSessionData.decode(session.stoken)
             ?: return Result.failure(IllegalStateException("会话已失效，请重新解析"))
+
+        // ★ t 约 10 分钟过期：过期就重新拉一次分享页取新参数，再继续。
+        //   否则用户解析完隔一会儿再点进文件夹，就会看到「请刷新，重试0」。
+        if (data.isFolder && isExpired(data)) {
+            val freshHtml = api.fetchSharePage(data.host, data.shareId).getOrNull()
+            if (freshHtml != null) {
+                val refreshed = parseSessionData(data.host, data.shareId, data.pwd, freshHtml)
+                if (!isExpired(refreshed)) data = refreshed
+            }
+        }
 
         // ★ 参数完整性检查（必须在发请求前做）：
         //   受密码保护的文件夹页面，t / k / puid / uid 是密码验证成功后服务端才下发的，

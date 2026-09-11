@@ -81,11 +81,44 @@ object LanzouShareConstants {
 
     // ---------- 文件夹分享页（filemoreajax.php 所需参数）----------
 
-    /** `var ib06pz = '1789152735'` → t（服务端下发的时间戳，有有效期） */
-    val T_REGEX = Regex("""var\s+ib06pz\s*=\s*'([^']+)'""")
+    /**
+     * 从分享页 HTML 中解析某个 JS 变量的值（**不依赖变量名**）。
+     *
+     * ★★ 关键：蓝奏云的这两个变量名是**每次渲染随机生成**的，不能写死。
+     *   实测两次抓包（同一站点、同一类页面）：
+     *     - 云盘 mydisk.php：var ib06pz（t） / var _gyirs（k）
+     *     - 分享文件夹页  ：var ib4h1j（t） / var _h2t3c（k）
+     *   写死变量名的正则必然只对其一生效 —— 这正是「请刷新，重试0」的根因。
+     *
+     * 做法：先从 ajax 的 data 块里找到引用（形如 `'t':ib4h1j`），
+     * 拿到随机名后再去找它的定义 `var ib4h1j = '...'`。
+     */
+    fun resolveDataVar(html: String, key: String): String {
+        val ref = Regex("""['"]?${Regex.escape(key)}['"]?\s*:\s*([A-Za-z_$][\w$]*)""")
+            .find(html) ?: return ""
+        val name = Regex.escape(ref.groupValues[1])
+        return Regex("""var\s+$name\s*=\s*'([^']+)'""")
+            .find(html)?.groupValues?.get(1).orEmpty()
+    }
 
-    /** `var _gyirs = '670e0fd4fa378cc5d48c25c7d70386d9'` → k */
-    val K_REGEX = Regex("""var\s+_gyirs\s*=\s*'([^']+)'""")
+    /**
+     * t（时间戳，**约 10 分钟有效期**）：兜底按值特征匹配。
+     * 实测 t - 响应 Date = 600 秒，故超时后必须重新拉页面取新的 t。
+     */
+    val T_FALLBACK_REGEX = Regex("""var\s+\w+\s*=\s*'(1\d{9})'""")
+
+    /** k（32 位十六进制）：兜底按值特征匹配 */
+    val K_FALLBACK_REGEX = Regex("""var\s+\w+\s*=\s*'([0-9a-f]{32})'""")
+
+    /** 取 t：优先按引用解析，失败则按值特征兜底 */
+    fun extractT(html: String): String =
+        resolveDataVar(html, "t").takeIf { it.isNotBlank() }
+            ?: T_FALLBACK_REGEX.find(html)?.groupValues?.get(1).orEmpty()
+
+    /** 取 k：优先按引用解析，失败则按值特征兜底 */
+    fun extractK(html: String): String =
+        resolveDataVar(html, "k").takeIf { it.isNotBlank() }
+            ?: K_FALLBACK_REGEX.find(html)?.groupValues?.get(1).orEmpty()
 
     /** `'puid':'BzJXMQBl...'` */
     val PUID_REGEX = Regex("""['"]?puid['"]?\s*:\s*'([^']+)'""")
