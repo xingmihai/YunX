@@ -158,8 +158,6 @@ import com.yunx.app.data.network.HttpClients
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen() {
-    // 下载线程数（上次选择）：rememberSaveable 使其成为可观察状态，确认后立即刷新后续弹窗的预填值
-    var lastThreads by rememberSaveable { mutableIntStateOf(settings.lastDownloadThreads) }
     var currentTab by rememberSaveable { mutableStateOf(MainTab.Resolve) }
     var showQuarkLogin by rememberSaveable { mutableStateOf(false) }
     var showUCLogin by rememberSaveable { mutableStateOf(false) }
@@ -210,6 +208,9 @@ fun MainScreen() {
     val pan123Api = remember { Pan123Api() }
     val db = remember { AppDatabase.get(context) }
     val settings = remember { SettingsRepository(context) }
+    // 下载线程数（上次选择）：rememberSaveable 使其成为可观察状态，确认后立即刷新后续弹窗的预填值。
+    // 必须在 settings 之后声明（Composable 内顺序执行，前置引用会导致编译错误）
+    var lastThreads by rememberSaveable { mutableIntStateOf(settings.lastDownloadThreads) }
     val repository = remember {
         QuarkAccountRepository(db.quarkAccountDao(), api)
     }
