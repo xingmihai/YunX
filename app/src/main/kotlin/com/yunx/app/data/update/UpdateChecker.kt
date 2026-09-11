@@ -48,30 +48,16 @@ object UpdateChecker {
     /** edge 加速镜像根地址：镜像站路径为「<前缀>/github.com/<owner>/<repo>」 */
     private const val EDGE_BASE = "https://edge.gh.xmhai.cn/github.com/$OWNER/$REPO"
 
-    /** 原站根地址（仅用于把镜像直链还原为 GitHub 原始直链） */
-    private const val ORIGIN_BASE = "https://github.com/$OWNER/$REPO"
-
     /** Release Atom 源 */
     private const val RELEASES_ATOM_URL = "$EDGE_BASE/releases.atom"
 
     /** 指定 tag 的附件列表（GitHub 网页异步展开 assets 用的片段） */
     private fun expandedAssetsUrl(tag: String) = "$EDGE_BASE/releases/expanded_assets/$tag"
 
-    /** 备用加速镜像前缀：主通道（edge）不可用时的第二选择 */
-    const val MIRROR_PREFIX = "https://cdn.gh-proxy.org/"
-
-    /**
-     * 备用加速通道：把直链还原成 GitHub 原始直链，再套 gh-proxy。
-     *
-     * ★ 不能直接 `MIRROR_PREFIX + downloadUrl`：downloadUrl 本身已是 edge 镜像地址，
-     *   套娃会得到 `gh-proxy.org/https://edge.gh.xmhai.cn/...` 这种无效链接。
-     */
-    fun mirrorUrl(url: String): String = MIRROR_PREFIX + url.replace(EDGE_BASE, ORIGIN_BASE)
-
     data class Asset(
         val name: String,
         val downloadUrl: String,
-        /** 附件体积（字节）；Atom/网页通道拿不到体积信息，恒为 null（仅 REST 能取到） */
+        /** 附件体积（字节）；从 expanded_assets 的「6.24 MB」文本解析，解析不到时为 null */
         val sizeBytes: Long? = null
     )
 
@@ -205,18 +191,39 @@ object UpdateChecker {
     /** 从网页片段解析 APK 直链：/xingmihai/YunX/releases/download/<tag>/<file>.apk */
     private suspend fun fetchAssetsFromWeb(tag: String): List<Asset> = runCatching {
         val html = httpGet(expandedAssetsUrl(tag)) ?: return@runCatching emptyList()
-        // 主匹配：完整 download 路径（带引号的 href）
-        val regex = Regex("href=\"/$OWNER/$REPO/releases/download/[^\"]+\\.apk\"")
-        val found = regex.findAll(html).mapNotNull { m ->
-            val path = m.value.substringAfter("href=\"").substringBefore("\"")
-            if (path.isBlank()) null else Asset(path.substringAfterLast('/'), "$EDGE_BASE/releases/download/$tag" + "/" + path.substringAfterLast('/'))
-        }.toList()
-        if (found.isNotEmpty()) return@runCatching found
-        // 兜底：属性顺序/引号风格变化时，直接匹配 download 路径本身
-        Regex("/$OWNER/$REPO/releases/download/[^\"'\\s]+\\.apk").findAll(html).map { m ->
-            val path = m.value
-            Asset(path.substringAfterLast('/'), "$EDGE_BASE/releases/download/$tag" + "/" + path.substringAfterLast('/'))
-        }.toList()
+        val href = Regex("/$OWNER/$REPO/releases/download/[^\"'\\s]+\\.apk")
+        val size = Regex("(\\d+(?:\\.\\d+)?)\\s*(KB|MB|GB)", RegexOption.IGNORE_CASE)
+
+        // ★ 按 <li> 切块再逐块配对：整个页面有多个附件，全局找体积会张冠李戴
+        //   （第一个附件可能匹配到第二个附件的体积）
+        val items = html.split("<li", ignoreCase = true).drop(1)
+        val assets = items.mapNotNull { item ->
+            val path = href.find(item)?.value ?: return@mapNotNull null
+            val name = path.substringAfterLast('/')
+            val bytes = size.find(item)?.let { m ->
+                val num = m.groupValues[1].toDoubleOrNull() ?: return@let null
+                val unit = m.groupValues[2].uppercase()
+                val factor = when (unit) {
+                    "KB" -> 1024L
+                    "MB" -> 1024L * 1024
+                    "GB" -> 1024L * 1024 * 1024
+                    else -> 1L
+                }
+                (num * factor).toLong()
+            }
+            Asset(
+                name = name,
+                downloadUrl = "$EDGE_BASE/releases/download/$tag/$name",
+                sizeBytes = bytes
+            )
+        }
+        assets.ifEmpty {
+            // 兜底：切块失败时退回全局匹配（此时拿不到体积）
+            href.findAll(html).map { m ->
+                val name = m.value.substringAfterLast('/')
+                Asset(name, "$EDGE_BASE/releases/download/$tag/$name")
+            }.toList()
+        }
     }.getOrDefault(emptyList())
 
     private fun httpGet(url: String): String? = runCatching {
@@ -254,7 +261,9 @@ object UpdateChecker {
     private val PRE_HTML = Regex("<pre[^>]*>(.*?)</pre>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
     private val ANCHOR = Regex("<a\\s[^>]*href=\"([^\"]*)\"[^>]*>(.*?)</a>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
     private val HR_HTML = Regex("<hr\\s*/?>", RegexOption.IGNORE_CASE)
-    private val BR_HTML = Regex("<br\\s*/?>", RegexOption.IGNORE_CASE)
+    /** `<br>` 后吃掉紧跟的空白/换行：源码中 `<br>` 后通常还有一个真实换行，
+     *  只替换标签会得到 `\n\n` → 段落断开，列表项续行被拆散 */
+    private val BR_HTML = Regex("<br\\s*/?>\\s*", RegexOption.IGNORE_CASE)
 
     /**
      * 把 Atom `<content>` 里的 HTML 转成 Markdown，使两个数据源（REST API 的 Markdown、
@@ -288,9 +297,8 @@ object UpdateChecker {
         s = H_TAG.replace(s) { m ->
             "\n${"#".repeat(m.groupValues[1].toIntOrNull() ?: 2)} ${m.groupValues[2].trim()}\n"
         }
-        // 5) 列表项（去空行，保持条目紧凑）
+        // 5) 列表项
         s = LI_TAG.replace(s) { m -> "- ${m.groupValues[1].trim()}" }
-        s = s.replace(Regex("(?m)^\\s*$"), "") // 列表项之间不留空行
         // 6) 强调与行内代码
         s = STRONG.replace(s) { m -> "**${m.groupValues[2].trim()}**" }
         s = EM.replace(s) { m -> "*${m.groupValues[2].trim()}*" }

@@ -41,7 +41,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -75,9 +74,7 @@ fun UpdateDialog(
     onDownload: () -> Unit,
     onLater: () -> Unit,
     onIgnore: () -> Unit,
-    downloading: Boolean = false,
-    /** 使用镜像站下载（可选）；为 null 时不显示镜像站按钮 */
-    onDownloadMirror: (() -> Unit)? = null
+    downloading: Boolean = false
 ) {
     val apk = remember(release) { UpdateChecker.preferredApk(release.assets) }
     val published = remember(release) { release.publishedAt.substringBefore("T", "") }
@@ -215,16 +212,6 @@ fun UpdateDialog(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("下载更新")
-                    }
-                }
-
-                if (onDownloadMirror != null) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedButton(
-                        onClick = onDownloadMirror,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("使用镜像站下载")
                     }
                 }
 
