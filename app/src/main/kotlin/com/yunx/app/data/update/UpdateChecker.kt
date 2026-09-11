@@ -89,6 +89,28 @@ object UpdateChecker {
         val publishedAt: String
     )
 
+    /**
+     * 从 Release 附件中挑选应当安装的 APK。
+     *
+     * ★ 不能用 `firstOrNull { it.name.endsWith(".apk") }`：GitHub 按上传顺序返回附件，
+     *   本仓库 workflow 先上传 debug 后上传 release，直接取首个会下到 **debug 版**
+     *   （体积大、带调试标志、非发布签名），用户点「下载更新」却装到调试包。
+     *
+     * 选取策略：先排除 debug/unsigned/unaligned，再优先 release/signed，最后回退首个。
+     */
+    fun preferredApk(assets: List<Asset>): Asset? {
+        val apks = assets.filter { it.name.endsWith(".apk", true) }
+        if (apks.isEmpty()) return null
+        val pool = apks.filterNot { a ->
+            val n = a.name.lowercase()
+            n.contains("debug") || n.contains("unsigned") || n.contains("unaligned")
+        }.ifEmpty { apks }
+        return pool.firstOrNull { a ->
+            val n = a.name.lowercase()
+            n.contains("release") || n.contains("signed")
+        } ?: pool.first()
+    }
+
     /** 比较两个版本号：v1 > v2 返回正数，v1 < v2 返回负数，相等返回 0 */
     fun compareVersions(v1: String, v2: String): Int {
         val parts1 = normalizeVersion(v1).split(".")

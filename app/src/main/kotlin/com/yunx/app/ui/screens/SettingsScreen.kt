@@ -545,7 +545,7 @@ fun SettingsScreen(
             release = release,
             onDownload = {
                 updateRelease = null
-                val apk = release.assets.firstOrNull { it.name.endsWith(".apk", true) }
+                val apk = UpdateChecker.preferredApk(release.assets)
                 if (apk != null) {
                     onDownloadUpdateApk(apk.downloadUrl, apk.name)
                     SnackbarController.show("已加入下载 ${apk.name}")
@@ -555,7 +555,7 @@ fun SettingsScreen(
             },
             onDownloadMirror = {
                 updateRelease = null
-                val apk = release.assets.firstOrNull { it.name.endsWith(".apk", true) }
+                val apk = UpdateChecker.preferredApk(release.assets)
                 if (apk != null) {
                     onDownloadUpdateApk(UpdateChecker.mirrorUrl(apk.downloadUrl), apk.name)
                     SnackbarController.show("已通过镜像站加入下载 ${apk.name}")
