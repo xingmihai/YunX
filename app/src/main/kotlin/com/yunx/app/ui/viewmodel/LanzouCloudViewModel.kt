@@ -107,10 +107,15 @@ class LanzouCloudViewModel(private val dao: LanzouAccountDao) : ViewModel() {
             val cookie = account.cookie
             val uid = account.uid
 
-            val token = vei ?: api.fetchVei(cookie, uid).getOrNull()
+            val veiResult = vei?.let { Result.success(it) } ?: api.fetchVei(cookie, uid)
+            val token = veiResult.getOrNull()
             if (token == null) {
                 if (myGeneration != loadGeneration) return@launch
-                _uiState.value = LanzouCloudUiState.Error("登录状态已失效，请重新登录")
+                // 展示真实原因，而不是一律说「登录失效」——
+                // 后者曾把「vei 正则写错」误报成「登录过期」，排查方向完全跑偏。
+                _uiState.value = LanzouCloudUiState.Error(
+                    veiResult.exceptionOrNull()?.message ?: "登录状态已失效，请重新登录"
+                )
                 return@launch
             }
             vei = token

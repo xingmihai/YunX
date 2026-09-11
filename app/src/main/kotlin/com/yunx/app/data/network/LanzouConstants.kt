@@ -74,8 +74,16 @@ object LanzouConstants {
     /** 登录态关键 Cookie 名之一：持久化登录凭证 */
     const val COOKIE_PHPDISK_INFO = "phpdisk_info"
 
-    /** 从 mydisk.php 页面 HTML 中提取 vei 的正则（页面 JS 形如 vei:'WFxQUlBWVwgHBQ9fC1E='） */
-    val VEI_REGEX = Regex("""vei\s*:\s*'([^']+)'""")
+    /**
+     * 从 mydisk.php 页面 HTML 中提取 vei 的正则。
+     *
+     * ★ 键**带引号**，这是实测抓包的真实写法：
+     *     `data : { 'task':47,'folder_id':folder_id,'vei':'VVFWVABSUAhVBFVWAVs=' },`
+     *   此前写成 `vei\s*:\s*'...'`（要求 vei 后紧跟冒号），而实际 `vei` 后面是**单引号**，
+     *   导致永远匹配不到 → 提取失败 → 云盘浏览一律提示「登录状态已失效」。
+     *   故键名两侧的可选引号必须考虑进正则。
+     */
+    val VEI_REGEX = Regex("""['"]?vei['"]?\s*:\s*['"]([^'"]+)['"]""")
 
     /**
      * 固定桌面 UA。

@@ -95,10 +95,11 @@ class LanzouApi {
                 .get()
                 .build()
             client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) error("获取 vei 失败：HTTP ${response.code}")
+                val code = response.code
                 val html = response.body?.string().orEmpty()
+                if (!response.isSuccessful) error("获取 vei 失败：HTTP $code")
                 LanzouConstants.VEI_REGEX.find(html)?.groupValues?.get(1)
-                    ?: error("未能从页面提取 vei（可能未登录或页面结构已变）")
+                    ?: error(buildVeiError(code, html))
             }
         }
     }
@@ -120,8 +121,10 @@ class LanzouApi {
             (0 until text.length()).mapNotNull { i ->
                 val o = text.optJSONObject(i) ?: return@mapNotNull null
                 LanzouFolder(
-                    folderId = o.optString("folderid"),
-                    name = o.optString("name"),
+                    // ★ 实测字段名为 fol_id（页面 JS 里是 n.fol_id）；
+                    //   保留 folderid 作为回退，防止不同接口/版本字段不同。
+                    folderId = o.optString("fol_id").ifBlank { o.optString("folderid") },
+                    name = o.optString("name").ifBlank { o.optString("folder_name") },
                     description = o.optString("folder_des")
                 )
             }
@@ -192,6 +195,23 @@ class LanzouApi {
             }
             all.toList()
         }
+    }
+
+    /**
+     * 提取 vei 失败时的诊断信息。
+     *
+     * ★ 目的是区分「登录态失效」与「页面结构变了 / 被 WAF 拦」——
+     *   这两种情况此前都笼统报成「登录状态已失效」，非常误导。
+     */
+    private fun buildVeiError(code: Int, html: String): String {
+        val looksLogin = html.contains("登录") || html.contains("login", ignoreCase = true)
+        val looksWaf = html.length < 512 || html.contains("acw_sc__v2") || html.contains("arg1")
+        val hint = when {
+            looksLogin -> "，疑似跳到了登录页（登录态可能已失效）"
+            looksWaf -> "，疑似被 WAF 拦截"
+            else -> "，页面结构可能已变化"
+        }
+        return "未能提取 vei（HTTP $code，页面 ${html.length} 字节$hint）"
     }
 
     private fun callText(cookie: String, uid: String, params: Map<String, String>): String {
