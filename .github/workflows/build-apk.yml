@@ -13,12 +13,15 @@ on:
           - debug
           - release
       publish_release:
-        description: '构建后创建 GitHub Release'
+        description: '构建后创建 GitHub Release（tag 由工作流自动生成）'
         type: boolean
-        default: false
+        default: true
   push:
-    tags:
-      - 'v*'
+    branches: [master]
+    # ★ 不再监听 push tags：
+    #   现在 tag 由本工作流在构建完成后自动创建，若仍监听 tag 推送会形成
+    #   「打 tag → 触发构建 → 再打 tag」的无限循环。
+    #   手工推送 tag 仍可用 workflow_dispatch 或直接改回此处，但需注意循环风险。
   pull_request:
     branches: [master]
 
@@ -60,12 +63,24 @@ jobs:
       - name: 授权 gradlew
         run: chmod +x ./gradlew
 
+      # ★ 构建时间必须**只算一次**并贯穿全流程：
+      #   printVersion 与 assembleRelease 是两次独立 Gradle 调用，各自执行
+      #   ZonedDateTime.now() 会在跨整点时算出不同 versionCode，
+      #   导致 tag 落后于 APK。统一用 -PbuildTime 传入同一时间戳即可保证同源。
+      - name: 计算构建时间
+        id: buildtime
+        run: |
+          EPOCH=$(TZ=Asia/Shanghai date +%s%3N)
+          echo "epoch=$EPOCH" >> "$GITHUB_OUTPUT"
+          echo "可读时间: $(TZ=Asia/Shanghai date -d @$((EPOCH/1000)) '+%Y-%m-%d %H:%M:%S %Z')"
+
       - name: 读取版本号
         id: version
         run: |
           # ★ versionName/versionCode 由构建日期在 Gradle 中生成，源码里没有字面量，
           #   不能再 grep 抠字符串。改由 Gradle 任务输出，保证单一数据源。
-          ./gradlew -q printVersion | tee /tmp/version.txt
+          #   传入同一 -PbuildTime，确保与后续 assemble 算出的版本完全一致。
+          ./gradlew -q printVersion -PbuildTime=${{ steps.buildtime.outputs.epoch }} | tee /tmp/version.txt
           NAME=$(grep '^name=' /tmp/version.txt | cut -d= -f2-)
           CODE=$(grep '^code=' /tmp/version.txt | cut -d= -f2-)
           if [ -z "$NAME" ]; then echo "::error::无法读取 versionName"; exit 1; fi
@@ -75,11 +90,11 @@ jobs:
 
       - name: 构建 Debug APK
         if: github.event.inputs.build_type != 'release'
-        run: ./gradlew assembleDebug --stacktrace
+        run: ./gradlew assembleDebug -PbuildTime=${{ steps.buildtime.outputs.epoch }} --stacktrace
 
       - name: 构建 Release APK
         if: github.event.inputs.build_type != 'debug'
-        run: ./gradlew assembleRelease --stacktrace
+        run: ./gradlew assembleRelease -PbuildTime=${{ steps.buildtime.outputs.epoch }} --stacktrace
 
       - name: 对齐并签名 Release APK
         if: github.event.inputs.build_type != 'debug'
@@ -141,6 +156,45 @@ jobs:
           fi
           ls -l dist
 
+      - name: 创建并推送 tag
+        id: git_tag
+        if: github.event_name == 'push' || github.event.inputs.publish_release == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          CODE="${{ steps.version.outputs.code }}"
+          TAG="v${CODE}"
+          # ★ tag 用 versionCode（v2026091121），Release 名称用 versionName（v2026.09.11）：
+          #   Atom 通道不提供 versionCode 字段，tag 是 App 端唯一能拿到它的途径。
+          #   由工作流在构建**之后**打 tag，可消除此前「人工在整点前打 tag、
+          #   构建跨点后 versionCode +1，导致 tag 落后于 APK、更新检测失效」的问题。
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "::warning::tag ${TAG} 已存在（同一小时内重复构建），跳过打 tag"
+            echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+            echo "created=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "YunX ${{ steps.version.outputs.name }} (versionCode ${CODE})"
+          # ★ 存在性检查与 push 非原子：并发构建可能同时通过检查。
+          #   push 报 already exists 时按重复构建路径处理（复用该 tag），
+          #   其他错误才判失败 —— 否则并发构建会红而不是跳过。
+          if ! git push origin "$TAG" 2>/tmp/tagpush.err; then
+            if grep -qi "already exists" /tmp/tagpush.err; then
+              echo "::warning::tag ${TAG} 已被并发构建创建，复用该 tag"
+              git tag -d "$TAG" >/dev/null 2>&1 || true
+            else
+              echo "::error::推送 tag 失败"
+              cat /tmp/tagpush.err
+              exit 1
+            fi
+          fi
+          echo "tag ${TAG} 就绪 -> ${GITHUB_SHA}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "created=true" >> "$GITHUB_OUTPUT"
+
       # ★ 先上传 release 再上传 debug：GitHub 按上传顺序返回 assets，
       #   App 端 preferredApk 已能正确挑选，但顺序正确可再降一层风险
       - name: 上传 Release APK
@@ -160,10 +214,13 @@ jobs:
           compression-level: 0
 
       - name: 创建 GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish_release == 'true'
+        if: github.event_name == 'push' || github.event.inputs.publish_release == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          # ★ Release 名称必须是纯版本号（v1.3.0），不要加 "YunX " 之类前缀：
+          # tag 由「创建并推送 tag」步骤生成；同一小时重复构建时该 tag 已存在，
+          # 此时复用它（softprops 会更新同名 Release 的附件）
+          tag_name: ${{ steps.git_tag.outputs.tag }}
+          # ★ Release 名称用 versionName（v2026.09.11），不要加 "YunX " 之类前缀：
           #   App 端 Atom 兜底（releases.atom）在 <link href> 缺失时会从 <title> 提取 tag，
           #   名称带前缀会让 tag 解析失败 → 更新检测静默失效。见 UpdateChecker.extractTag。
           name: v${{ steps.version.outputs.name }}
