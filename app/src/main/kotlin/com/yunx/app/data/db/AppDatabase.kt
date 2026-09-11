@@ -70,7 +70,10 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "yunx.db"
                 )
-                    .addMigrations(MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
+                    .addMigrations(
+                        MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12,
+                        MIGRATION_12_13, MIGRATION_13_14, MIGRATION_15_14
+                    )
                     // 早期开发版（1-8）无可靠 schema；从 v9 起必须保留凭证和下载任务
                     .fallbackToDestructiveMigrationFrom(1, 2, 3, 4, 5, 6, 7, 8)
                     .build()
@@ -104,6 +107,24 @@ abstract class AppDatabase : RoomDatabase() {
         private val MIGRATION_13_14 = object : Migration(13, 14) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE download_task ADD COLUMN threadCount INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /**
+         * 15 → 14 **降级**迁移：删除蓝奏云账号表。
+         *
+         * ★ 为什么需要：v15 是蓝奏云版本（其 14→15 迁移建了 `lanzou_account` 表）。
+         *   蓝奏云功能回退后，当前 schema 回到 v14 且已无对应 Entity。
+         *   装过蓝奏云版的设备其数据库停在 v15，运行 v14 的 App 时 Room 会走
+         *   onDowngrade —— 找不到 15→14 路径就抛
+         *   `IllegalStateException: A migration from 15 to 14 was required but not found`，
+         *   **冷启动即崩溃**。
+         *
+         * 只需删掉那张表，其余数据（下载任务、各网盘凭证、书签）完整保留。
+         */
+        private val MIGRATION_15_14 = object : Migration(15, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("DROP TABLE IF EXISTS `lanzou_account`")
             }
         }
 
