@@ -19,7 +19,7 @@
 package com.yunx.app.data.network
 
 /** 网盘平台 */
-enum class SharePlatform { QUARK, UC, XUNLEI, BAIDU, C139, PAN123 }
+enum class SharePlatform { QUARK, UC, XUNLEI, BAIDU, C139, PAN123, LANZOU }
 
 /**
  * 解析结果：share_id + 提取码 + 平台。
@@ -33,6 +33,7 @@ data class ParsedShare(
 /**
  * 从分享链接或整段分享文案中提取 share_id 与提取码。
  * 支持：pan.quark.cn/s/xxx（夸克）、drive.uc.cn/s/xxx（UC）、pan.xunlei.com/s/xxx（迅雷）
+ * 蓝奏云：https://<任意 lanzou 域名>/<id>（域名会漂移，故按 host 特征匹配）
  */
 object ShareLinkParser {
 
@@ -50,6 +51,14 @@ object ShareLinkParser {
     private val pan123ShareIdRegex = Regex("""123(?:865|pan)\.(?:com|cn)/s/([A-Za-z0-9]+-[A-Za-z0-9]+)""", RegexOption.IGNORE_CASE)
     private val pan123ShareSubRegex = Regex("""share\.123pan\.cn/123pan/([A-Za-z0-9-]+)""", RegexOption.IGNORE_CASE)
     private val pan123SrrRegex = Regex("""api/srr\?sk=([A-Za-z0-9-]+)""", RegexOption.IGNORE_CASE)
+    /**
+     * 蓝奏云分享链接：https://<host>/<id>
+     *
+     * ★ host 只要含 `lanzou` 即匹配（lanzoux / lanzouw / lanzoui 及子域），
+     *   域名漂移时无需改代码。末尾 `$` 排除 `api.ilanzou.com/unproved/pd/url?id=...`
+     *   这类转存接口路径。
+     */
+    private val lanzouRegex = Regex("""https?://([\w.-]*lanzou[\w.-]*)/([A-Za-z0-9]+)(?:[?#][^\s]*)?$""", RegexOption.IGNORE_CASE)
     private val pwdInUrlRegex = Regex("""[?&]pwd=([A-Za-z0-9]+)""")
     private val pwdInTextRegex = Regex("""(?:提取码|访问码|密码)[：:]\s*([A-Za-z0-9]{4,8})""")
 
@@ -104,6 +113,13 @@ object ShareLinkParser {
             val pwd = pwdInUrlRegex.find(url)?.groupValues?.getOrNull(1)
                 ?: pwdInTextRegex.find(text)?.groupValues?.getOrNull(1)
             return ParsedShare(shareId = sid, pwd = pwd, platform = SharePlatform.PAN123)
+        }
+        // 蓝奏云：host 与 id 都从链接提取（域名会漂移，不能硬编码）
+        lanzouRegex.find(url)?.let { m ->
+            val shareId = m.groupValues[2]
+            val pwd = pwdInUrlRegex.find(url)?.groupValues?.getOrNull(1)
+                ?: pwdInTextRegex.find(text)?.groupValues?.getOrNull(1)
+            return ParsedShare(shareId = shareId, pwd = pwd, platform = SharePlatform.LANZOU)
         }
         return null
     }

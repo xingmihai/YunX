@@ -31,6 +31,8 @@ import com.yunx.app.data.download.DownloadManager
 import com.yunx.app.data.download.DownloadPlatform
 import com.yunx.app.data.network.BaiduConstants
 import com.yunx.app.data.network.C139Constants
+import com.yunx.app.data.network.LanzouShareConstants
+import com.yunx.app.data.network.LanzouShareSessionData
 import com.yunx.app.data.network.Pan123Constants
 import com.yunx.app.data.network.QuarkConstants
 import com.yunx.app.data.network.QuarkCdn
@@ -45,6 +47,7 @@ import com.yunx.app.data.repository.BaiduAccountRepository
 import com.yunx.app.data.repository.BaiduResolveRepository
 import com.yunx.app.data.repository.C139AccountRepository
 import com.yunx.app.data.repository.C139ResolveRepository
+import com.yunx.app.data.repository.LanzouResolveRepository
 import com.yunx.app.data.repository.Pan123AccountRepository
 import com.yunx.app.data.repository.Pan123ResolveRepository
 import com.yunx.app.data.repository.QuarkAccountRepository
@@ -82,6 +85,7 @@ class ResolveViewModel(
     private val c139ResolveRepository: C139ResolveRepository,
     private val pan123AccountRepository: Pan123AccountRepository,
     private val pan123ResolveRepository: Pan123ResolveRepository,
+    private val lanzouResolveRepository: LanzouResolveRepository,
     private val downloadManager: DownloadManager,
     private val bookmarkDao: BookmarkDao
 ) : ViewModel() {
@@ -492,13 +496,19 @@ class ResolveViewModel(
     /** 当前解析平台（QUARK / UC / XUNLEI），由链接自动检测 */
     private var currentPlatform: SharePlatform = SharePlatform.QUARK
 
+    /** 蓝奏云无需登录，用占位值避免被「未登录」拦截（见 [requiresLogin]） */
+    private val LANZOU_NO_CREDENTIAL = "-"
+
     /** 当前平台凭证（夸克/UC/百度/139 用 cookie，迅雷/123 用 access_token） */
+
     private suspend fun currentCredential(): String? = when (currentPlatform) {
         SharePlatform.UC -> ucAccountRepository.getAccount()?.cookie
         SharePlatform.XUNLEI -> xunleiAccountRepository.getAccount()?.accessToken
         SharePlatform.BAIDU -> baiduAccountRepository.getAccount()?.cookie
         SharePlatform.C139 -> c139AccountRepository.getAccount()?.cookie
         SharePlatform.PAN123 -> pan123AccountRepository.getAccount()?.accessToken
+        // 蓝奏云解析免登录：返回非空占位，避免被 requiresLogin() 之外的校验拦下
+        SharePlatform.LANZOU -> LANZOU_NO_CREDENTIAL
         else -> accountRepository.getAccount()?.cookie
     }
 
@@ -508,8 +518,19 @@ class ResolveViewModel(
         SharePlatform.BAIDU -> baiduResolveRepository
         SharePlatform.C139 -> c139ResolveRepository
         SharePlatform.PAN123 -> pan123ResolveRepository
+        SharePlatform.LANZOU -> lanzouResolveRepository
         else -> resolveRepository
     }
+
+    /**
+     * 该平台解析是否需要网盘登录态。
+     *
+     * ★ 蓝奏云为 **false**：抓包显示分享解析全程只用匿名 Cookie
+     *   （codelen / m_adb1 / m_ad3），不需要任何登录凭证。
+     *   若走通用逻辑会因拿不到 cookie 直接报「请先登录蓝奏云」，
+     *   属误导 —— 用户根本不需要登录。
+     */
+    private fun requiresLogin(): Boolean = currentPlatform != SharePlatform.LANZOU
 
     private fun currentDefaultDirFid(): String = when (currentPlatform) {
         SharePlatform.UC -> UCConstants.DEFAULT_PDIR_FID
@@ -517,6 +538,7 @@ class ResolveViewModel(
         SharePlatform.BAIDU -> ""
         SharePlatform.C139 -> "0"
         SharePlatform.PAN123 -> "0"
+        SharePlatform.LANZOU -> ""
         else -> QuarkConstants.DEFAULT_PDIR_FID
     }
 
@@ -526,6 +548,7 @@ class ResolveViewModel(
         SharePlatform.BAIDU -> "百度网盘"
         SharePlatform.C139 -> "139 网盘"
         SharePlatform.PAN123 -> "123云盘"
+        SharePlatform.LANZOU -> "蓝奏云"
         else -> "夸克网盘"
     }
 
@@ -542,7 +565,7 @@ class ResolveViewModel(
             }
             currentPlatform = parsed.platform
             val credential = currentCredential()
-            if (credential.isNullOrBlank()) {
+            if (requiresLogin() && credential.isNullOrBlank()) {
                 uiState = ResolveUiState.Error("请先在「网盘」页登录${platformName()}")
                 return@launch
             }
@@ -713,6 +736,7 @@ class ResolveViewModel(
         val isXunlei = currentPlatform == SharePlatform.XUNLEI
         val isBaidu = currentPlatform == SharePlatform.BAIDU
         val isC139 = currentPlatform == SharePlatform.C139
+        val isLanzou = currentPlatform == SharePlatform.LANZOU
         val isPan123 = currentPlatform == SharePlatform.PAN123
         val isQuark = currentPlatform == SharePlatform.QUARK
         // 下载来源平台：按平台应用下载线程数设置
@@ -722,6 +746,7 @@ class ResolveViewModel(
             isBaidu -> DownloadPlatform.BAIDU
             isC139 -> DownloadPlatform.C139
             isPan123 -> DownloadPlatform.PAN123
+            isLanzou -> DownloadPlatform.LANZOU
             else -> DownloadPlatform.QUARK
         }
         // 【关键修复】夸克/UC 共用 __puus：取链与下载必须用同一份已刷新 Cookie（AlistGo/alist#830 类缺陷）
@@ -752,6 +777,21 @@ class ResolveViewModel(
                 "Referer" to UCConstants.DOWNLOAD_REFERER,
                 "Origin" to UCConstants.WEB_ORIGIN
             )
+            // 蓝奏云：直链域名（如 u5189768.dmpdmp.com）会校验 Referer，
+            // 且必须带与解析时一致的移动 UA，否则可能 403
+            isLanzou -> {
+                // Referer 必须是**实际分享域名**（域名会漂移，不能写常量）。
+                // 从会话里取；取不到就只带 UA，避免拼出错误的 Referer 触发 403。
+                val host = session?.stoken?.let { LanzouShareSessionData.decode(it)?.host }
+                if (host.isNullOrBlank()) {
+                    mapOf("User-Agent" to LanzouShareConstants.USER_AGENT)
+                } else {
+                    mapOf(
+                        "User-Agent" to LanzouShareConstants.USER_AGENT,
+                        "Referer" to "https://$host/"
+                    )
+                }
+            }
             // 夸克：防盗链需固定 Referer（对齐 AList quark_uc）
             else -> mapOf(
                 "Cookie" to effectiveCredential,
@@ -827,6 +867,7 @@ class ResolveViewModel(
         private val c139ResolveRepository: C139ResolveRepository,
         private val pan123AccountRepository: Pan123AccountRepository,
         private val pan123ResolveRepository: Pan123ResolveRepository,
+        private val lanzouResolveRepository: LanzouResolveRepository,
         private val downloadManager: DownloadManager,
         private val bookmarkDao: BookmarkDao
     ) : ViewModelProvider.Factory {
@@ -840,6 +881,7 @@ class ResolveViewModel(
                 baiduAccountRepository, baiduResolveRepository,
                 c139AccountRepository, c139ResolveRepository,
                 pan123AccountRepository, pan123ResolveRepository,
+                lanzouResolveRepository,
                 downloadManager,
                 bookmarkDao
             ) as T
