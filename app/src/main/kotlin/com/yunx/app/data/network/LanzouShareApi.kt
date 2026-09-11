@@ -99,6 +99,53 @@ class LanzouShareApi {
         return bucket.entries.joinToString("; ") { "${it.key}=${it.value}" }
     }
 
+    /**
+     * 执行请求，命中 WAF 挑战时**自动算出 acw_sc__v2 并带 Cookie 重试**。
+     *
+     * ★ 为什么必须做：蓝奏云分享域名挂在阿里云 ESA 后面。触发风控时返回的
+     *   不是数据，而是一段含 `var arg1='...'` 的混淆 JS 挑战页（HTTP 仍是 200）。
+     *   浏览器会执行它并写入 acw_sc__v2 后自动重试；OkHttp 不执行 JS，
+     *   于是一直卡在挑战页 —— 表现为「下载返回网页而非文件」「请刷新，重试0」。
+     *
+     * 处理：检测到 arg1 → 调用 [LanzouShareConstants.acwScV2] 计算 →
+     * 写入 cookieStore（CookieJar 后续请求自动带上）→ 轮换 UA → 重试。
+     *
+     * ★ 轮换 UA 的原因：同一 UA 连续请求更像脚本，轮换可显著提高绕过率。
+     *
+     * @param buildRequest 每次重试都会重建 Request（UA 变化；OkHttp 的 Request 不可变）
+     * @return 最终响应体；若始终命中挑战，返回最后一次的挑战页原文（交由上层解析报错）
+     */
+    private fun executeWithWafBypass(
+        host: String,
+        errorPrefix: String,
+        buildRequest: (ua: String) -> Request
+    ): String {
+        var attempt = 0
+        var lastBody = ""
+        while (true) {
+            val ua = if (attempt % 2 == 0) {
+                LanzouShareConstants.USER_AGENT
+            } else {
+                LanzouShareConstants.DESKTOP_USER_AGENT
+            }
+            client.newCall(buildRequest(ua)).execute().use { response ->
+                if (!response.isSuccessful) error("$errorPrefix：HTTP ${response.code}")
+                val body = response.body?.string().orEmpty()
+                val arg1 = LanzouShareConstants.ARG1_REGEX.find(body)?.groupValues?.getOrNull(1)
+                // 非挑战页：直接返回
+                if (arg1 == null) return body
+                val acw = LanzouShareConstants.acwScV2(arg1)
+                // 算不出（arg1 异常）或已用尽重试：返回原文，让上层给出可读错误
+                if (acw.isBlank() || attempt >= LanzouShareConstants.WAF_MAX_RETRIES) return body
+                cookieStore.getOrPut(host) { mutableMapOf() }["acw_sc__v2"] = acw
+                lastBody = body
+                attempt++
+            }
+        }
+        @Suppress("UNREACHABLE_CODE")
+        return lastBody
+    }
+
     // ---------- 页面抓取 ----------
 
     /**
@@ -109,15 +156,13 @@ class LanzouShareApi {
         seedCookie(host)
         val url = "https://$host/$path"
         runCatching {
-            val request = Request.Builder()
-                .url(url)
-                .header("User-Agent", LanzouShareConstants.USER_AGENT)
-                .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-                .get()
-                .build()
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) error("打开分享页失败：HTTP ${response.code}")
-                response.body?.string().orEmpty()
+            executeWithWafBypass(host, "打开分享页失败") { ua ->
+                Request.Builder()
+                    .url(url)
+                    .header("User-Agent", ua)
+                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                    .get()
+                    .build()
             }
         }
     }
@@ -127,15 +172,13 @@ class LanzouShareApi {
         withContext(Dispatchers.IO) {
             runCatching {
                 val url = "https://$host/${tpPath.trimStart('/')}"
-                val request = Request.Builder()
-                    .url(url)
-                    .header("User-Agent", LanzouShareConstants.USER_AGENT)
-                    .header("Referer", referer)
-                    .get()
-                    .build()
-                client.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) error("打开下载页失败：HTTP ${response.code}")
-                    response.body?.string().orEmpty()
+                executeWithWafBypass(host, "打开下载页失败") { ua ->
+                    Request.Builder()
+                        .url(url)
+                        .header("User-Agent", ua)
+                        .header("Referer", referer)
+                        .get()
+                        .build()
                 }
             }
         }
@@ -163,7 +206,8 @@ class LanzouShareApi {
     ): Result<FolderListResult> = withContext(Dispatchers.IO) {
         seedCookie(data.host)
         runCatching {
-            val body = FormBody.Builder()
+            // 每次重试都重建 body：OkHttp 的 Request/FormBody 不可变，且重试需换 UA
+            fun buildBody() = FormBody.Builder()
                 .add("lx", "2")
                 .add("fid", data.folderFileId)
                 .add("uid", data.uid)
@@ -176,16 +220,21 @@ class LanzouShareApi {
                 .add("ls", "1")
                 .add("pwd", data.pwd)
                 .build()
-            val request = Request.Builder()
-                .url("https://${data.host}/filemoreajax.php?file=${data.folderFileId}")
-                .header("User-Agent", LanzouShareConstants.USER_AGENT)
-                .header("X-Requested-With", LanzouShareConstants.AJAX_HEADER)
-                .header("Referer", "https://${data.host}/${data.shareId}")
-                .post(body)
-                .build()
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) error("获取文件列表失败：HTTP ${response.code}")
-                val json = JSONObject(response.body?.string().orEmpty())
+            runCatching {
+                val raw = executeWithWafBypass(data.host, "获取文件列表失败") { ua ->
+                    Request.Builder()
+                        .url("https://${data.host}/filemoreajax.php?file=${data.folderFileId}")
+                        .header("User-Agent", ua)
+                        .header("X-Requested-With", LanzouShareConstants.AJAX_HEADER)
+                        .header("Referer", "https://${data.host}/${data.shareId}")
+                        .post(buildBody())
+                        .build()
+                }
+                // 重试耗尽后仍是挑战页：给出明确原因，而不是让 JSONObject 抛解析异常
+                if (LanzouShareConstants.ARG1_REGEX.containsMatchIn(raw)) {
+                    error("被安全验证拦截（已重试 ${LanzouShareConstants.WAF_MAX_RETRIES} 次），请稍后再试")
+                }
+                val json = JSONObject(raw)
                 val zt = json.optInt("zt", -1)
                 val info = json.optString("info").orEmpty()
                 val text = json.optJSONArray("text")
@@ -218,22 +267,26 @@ class LanzouShareApi {
     ): Result<DirectLink> = withContext(Dispatchers.IO) {
         seedCookie(host)
         runCatching {
-            val body = FormBody.Builder()
+            fun buildBody() = FormBody.Builder()
                 .add("action", "downprocess")
                 .add("sign", sign)
                 .add("p", pwd)
                 .add("kd", "1")
                 .build()
-            val request = Request.Builder()
-                .url("https://$host/ajaxfile.php?file=$fileId")
-                .header("User-Agent", LanzouShareConstants.USER_AGENT)
-                .header("X-Requested-With", LanzouShareConstants.AJAX_HEADER)
-                .header("Referer", referer)
-                .post(body)
-                .build()
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) error("获取直链失败：HTTP ${response.code}")
-                val json = JSONObject(response.body?.string().orEmpty())
+            runCatching {
+                val raw = executeWithWafBypass(host, "获取直链失败") { ua ->
+                    Request.Builder()
+                        .url("https://$host/ajaxfile.php?file=$fileId")
+                        .header("User-Agent", ua)
+                        .header("X-Requested-With", LanzouShareConstants.AJAX_HEADER)
+                        .header("Referer", referer)
+                        .post(buildBody())
+                        .build()
+                }
+                if (LanzouShareConstants.ARG1_REGEX.containsMatchIn(raw)) {
+                    error("被安全验证拦截（已重试 ${LanzouShareConstants.WAF_MAX_RETRIES} 次），请稍后再试")
+                }
+                val json = JSONObject(raw)
                 if (json.optInt("zt", 0) != 1) {
                     error(json.optString("inf").takeIf { it.isNotBlank() } ?: "获取直链失败")
                 }

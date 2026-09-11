@@ -28,6 +28,16 @@ object LanzouShareConstants {
     const val USER_AGENT =
         "Mozilla/5.0 (Linux; Android 16; PLQ110 Build/BP2A.250605.015) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.7922.199 Mobile Safari/537.36"
 
+    /**
+     * 桌面 UA：WAF 挑战重试时与 [USER_AGENT] 轮换使用。
+     * 单一 UA 连续请求更容易被判为脚本，轮换可显著提高绕过成功率。
+     */
+    const val DESKTOP_USER_AGENT =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
+    /** WAF 挑战最大重试轮数（每轮换 UA 与新的 acw_sc__v2） */
+    const val WAF_MAX_RETRIES = 3
+
     /** 发起会话时的初始 Cookie（抓包首次请求即带 codelen=1） */
     const val INITIAL_COOKIE = "codelen=1"
 
@@ -49,6 +59,64 @@ object LanzouShareConstants {
      *   但抓包未覆盖到**实际下载请求**，无法确认带上是否会被拒。
      *   故默认留空（多数第三方实现亦不加），若下载失败改此常量即可。
      */
+    // ---------- WAF 挑战（阿里云 ESA）----------
+
+    /**
+     * 挑战页特征：响应体里含 `var arg1='...'`。
+     *
+     * ★ 命中即表示被 ESA 拦截（响应是混淆 JS 而非真实内容），
+     *   必须算出 acw_sc__v2 并带 Cookie 重试。
+     *   注意：检测必须在**解析 JSON 之前**做 —— 挑战页不是 JSON，
+     *   直接喂给 JSONObject 会抛异常，掩盖真正原因。
+     */
+    val ARG1_REGEX = Regex("""var\s+arg1\s*=\s*'([^']+)'""")
+
+    /**
+     * acw_sc__v2 计算：**40 位定长置换 + 逐对 XOR**。
+     *
+     * 这是阿里云 ESA 的标准挑战算法（业界逆向多年，常量长期稳定），
+     * 与浏览器执行挑战页 JS 的结果**完全一致** —— 属于协议实现，不是破解。
+     *
+     * 步骤：
+     * 1. 置换：arg1 的第 i 位（1-based）放到输出的第 j 位，其中 posList[j] == i
+     * 2. XOR：arg2 与 mask 每 2 位十六进制逐对异或
+     */
+    private val WAF_POS_LIST = intArrayOf(
+        15, 35, 29, 24, 33, 16, 1, 38, 10, 9,
+        19, 31, 40, 27, 22, 23, 25, 13, 6, 11,
+        39, 18, 20, 8, 14, 21, 32, 26, 2, 30,
+        7, 4, 17, 5, 3, 28, 34, 37, 12, 36
+    )
+
+    /** XOR 掩码（40 位十进制数字串，按 2 位切分后作十六进制解析） */
+    private const val WAF_MASK = "3000176000856006061501533003690027800375"
+
+    /** 输出长度（与置换表、掩码长度一致） */
+    private const val WAF_LENGTH = 40
+
+    /**
+     * 由挑战页的 arg1 计算 acw_sc__v2。
+     * @return 40 位小写十六进制；arg1 异常（过短/非十六进制）时返回空串，由调用方决定是否重试
+     */
+    fun acwScV2(arg1: String): String {
+        if (arg1.length < WAF_LENGTH) return ""
+        // 1. 定长置换
+        val out = CharArray(WAF_LENGTH) { ' ' }
+        for (i in 0 until WAF_LENGTH) {
+            val target = WAF_POS_LIST.indexOf(i + 1)
+            if (target >= 0) out[target] = arg1[i]
+        }
+        val arg2 = String(out)
+        // 2. 每 2 位十六进制与掩码逐对 XOR
+        val sb = StringBuilder(WAF_LENGTH)
+        for (i in 0 until WAF_LENGTH step 2) {
+            val a = arg2.substring(i, i + 2).toIntOrNull(16) ?: return ""
+            val m = WAF_MASK.substring(i, i + 2).toIntOrNull(16) ?: return ""
+            sb.append(((a xor m) and 0xFF).toString(16).padStart(2, '0'))
+        }
+        return sb.toString()
+    }
+
     /**
      * 直链后缀：**App 场景固定为 `&lanosso2`**（tp 页 JS 逻辑推导，非猜测）。
      *
