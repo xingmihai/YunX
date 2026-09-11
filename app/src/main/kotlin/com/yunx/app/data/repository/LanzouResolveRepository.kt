@@ -243,6 +243,8 @@ class LanzouResolveRepository : ShareResolveRepository {
         val tpHtml = api.fetchTpPage(data.host, tpPath, sharePageUrl).getOrElse {
             return Result.failure(it)
         }
+        // ★ tp 页完整 URL：下载时的 Referer 必须是它，而不是分享域名根
+        val tpPageUrl = "https://${data.host}/${tpPath.trimStart('/')}"
 
         // 无密码：tp 页 JS 直接给出了域名与 query
         val vkjxld = LanzouShareConstants.VKJXLD_REGEX.find(tpHtml)?.groupValues?.getOrNull(1)
@@ -255,7 +257,8 @@ class LanzouResolveRepository : ShareResolveRepository {
                     downloadUrl = vkjxld + hyggid + LanzouShareConstants.LANOSSO_SUFFIX,
                     size = file.fsize,
                     // ★ 取链与下载必须同一份 Cookie，否则直链返回 HTML 而非文件
-                    cookie = api.cookieHeader(data.host)
+                    cookie = api.cookieHeader(data.host),
+                    referer = tpPageUrl
                 )
             )
         }
@@ -284,7 +287,8 @@ class LanzouResolveRepository : ShareResolveRepository {
                 filename = direct.filename.ifBlank { file.fname },
                 downloadUrl = direct.url,
                 size = file.fsize,
-                cookie = api.cookieHeader(data.host)
+                cookie = api.cookieHeader(data.host),
+                referer = tpPageUrl
             )
         )
     }

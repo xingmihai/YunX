@@ -29,6 +29,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.Call
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import java.io.File
 import java.io.IOException
 import java.io.RandomAccessFile
@@ -38,6 +39,33 @@ import kotlin.coroutines.coroutineContext
 import kotlin.math.min
 
 private const val TAG = "YunX-DL"
+
+/**
+ * 从 HTML 响应里提取可见文本片段，用于诊断「为什么拿到的是 HTML 而不是文件」。
+ *
+ * ★ 为什么需要：服务器在防盗链 / 直链过期 / 参数缺失 / 被限流时**都返回 200 + text/html**，
+ *   但页面内容各不相同（可能是"文件不存在"、"请刷新"、"访问频繁"或广告页）。
+ *   只记一句「返回 text/html」无法判断属于哪一种，只能靠猜 —— 实测已因此绕了一轮。
+ *   读出正文片段后，一次日志就能定位。
+ *
+ * 注意：调用会消耗并关闭响应体，仅用于**已判定失败**的响应。
+ */
+private fun peekHtmlText(response: Response, limit: Int = 160): String {
+    val raw = try {
+        response.body?.string().orEmpty()
+    } catch (e: Exception) {
+        return "<读取失败: ${e.message}>"
+    }
+    if (raw.isBlank()) return "<空响应体>"
+    val text = raw
+        .replace(Regex("<script[\s\S]*?</script>", RegexOption.IGNORE_CASE), " ")
+        .replace(Regex("<style[\s\S]*?</style>", RegexOption.IGNORE_CASE), " ")
+        .replace(Regex("<[^>]*>"), " ")
+        .replace("&nbsp;", " ")
+        .replace(Regex("\s+"), " ")
+        .trim()
+    return if (text.length > limit) text.substring(0, limit) + "…" else text.ifBlank { "<无可提取文本>" }
+}
 
 /** 分片下载单次失败后的瞬时 IO 重试次数 */
 private const val CHUNK_RETRIES = 3
@@ -95,9 +123,11 @@ class ChunkDownloader(private val clientProvider: () -> OkHttpClient) {
             try {
                 runCatching {
                     call.execute().use { response ->
-                        Log.d(TAG, "getTotalSize: range=$withRange code=${response.code} ct=${response.header("Content-Type")} origin=${LogRedactor.url(url)}")
+                        val ct = response.header("Content-Type").orEmpty()
+                        Log.d(TAG, "getTotalSize: range=$withRange code=${response.code} ct=$ct origin=${LogRedactor.url(url)}")
                         // ★ 防盗链/过期/错误页（HTML）直接视为无法取大小，回退流式/单流
-                        if (response.header("Content-Type").orEmpty().contains("text/html", ignoreCase = true)) {
+                        if (ct.contains("text/html", ignoreCase = true)) {
+                            Log.w(TAG, "getTotalSize: 返回 HTML，内容=${peekHtmlText(response)}")
                             return@use null
                         }
                         if (!response.isSuccessful) return@use null
@@ -194,7 +224,7 @@ class ChunkDownloader(private val clientProvider: () -> OkHttpClient) {
             return call.execute().use { response ->
                 // 防盗链/广告回退页：直接判失败
                 if (response.header("Content-Type").orEmpty().contains("text/html", ignoreCase = true)) {
-                    Log.w(TAG, "downloadChunk: task=$taskId 返回 text/html（疑似广告/错误页），终止")
+                    Log.w(TAG, "downloadChunk: task=$taskId 返回 HTML，内容=${peekHtmlText(response)}")
                     return@use ChunkResult.FAILED
                 }
                 when (val code = response.code) {
@@ -284,8 +314,9 @@ class ChunkDownloader(private val clientProvider: () -> OkHttpClient) {
             call.execute().use { response ->
                 // ★ 最终响应若是 HTML（防盗链/过期/错误页），直接失败，绝不存盘
                 if (response.header("Content-Type").orEmpty().contains("text/html", ignoreCase = true)) {
-                    Log.w(TAG, "downloadFull: task=$taskId 返回 text/html（疑似过期/防盗链/错误页），终止")
-                    throw IllegalStateException("下载失败：链接已失效或需要 Referer（返回 HTML 页）")
+                    val hint = peekHtmlText(response)
+                    Log.w(TAG, "downloadFull: task=$taskId 返回 HTML，内容=$hint")
+                    throw IllegalStateException("下载失败：服务器返回的是网页而非文件（$hint）")
                 }
                 if (!response.isSuccessful) throw IllegalStateException("下载失败 HTTP ${response.code}")
                 val body = response.body ?: return@use false

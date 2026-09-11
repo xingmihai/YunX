@@ -88,7 +88,17 @@ data class DownloadLink(
      *   缺了会返回 200 + text/html 而非文件。取链时由 ShareApi 导出并随链带回，
      *   下载时再原样发出，保证「取链与下载同一份 Cookie」。
      */
-    val cookie: String = ""
+    val cookie: String = "",
+    /**
+     * 下载该直链必须携带的 Referer（蓝奏云专用，其余平台为空）。
+     *
+     * ★ 蓝奏云直链校验 Referer，且必须是 **tp 中间页的完整 URL**
+     *   （形如 https://host/tp/xxx?webtp=yyy），不是分享域名根。
+     *   真实浏览器流程是「分享页 → tp 页 → 直链」，跳转时 Referer 就是 tp 页。
+     *   此前用分享域名根（https://host/），与浏览器行为不一致，
+     *   服务器可能据此判定为盗链并返回 HTML 页。
+     */
+    val referer: String = ""
 )
 
 /** UC 转码播放流（绕过非会员视频下载被换成宣传片的问题；url 为 m3u8/fmp4 分片地址） */
