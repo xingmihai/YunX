@@ -57,6 +57,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -157,6 +158,8 @@ import com.yunx.app.data.network.HttpClients
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen() {
+    // 下载线程数（上次选择）：rememberSaveable 使其成为可观察状态，确认后立即刷新后续弹窗的预填值
+    var lastThreads by rememberSaveable { mutableIntStateOf(settings.lastDownloadThreads) }
     var currentTab by rememberSaveable { mutableStateOf(MainTab.Resolve) }
     var showQuarkLogin by rememberSaveable { mutableStateOf(false) }
     var showUCLogin by rememberSaveable { mutableStateOf(false) }
@@ -646,8 +649,11 @@ fun MainScreen() {
                         c139CloudViewModel,
                         ucCloudViewModel,
                         pan123CloudViewModel,
-                        initialThreads = settings.lastDownloadThreads,
-                        onThreadsSelected = { settings.lastDownloadThreads = it }
+                        initialThreads = lastThreads,
+                        onThreadsSelected = {
+                            settings.lastDownloadThreads = it
+                            lastThreads = it
+                        }
                     )
                     MainTab.Drive -> DriveScreen(
                         scrollBehavior = scrollBehavior,

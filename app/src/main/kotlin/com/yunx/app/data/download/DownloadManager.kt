@@ -601,6 +601,11 @@ class DownloadManager(
         val threadCount = task.threadCount.takeIf { it > 0 }
             ?: threadProvider(task.platform)
             .coerceAtLeast(1)
+        // ★ 首次运行（旧任务/未指定线程数的入口）必须把解析出的线程数落库：
+        //   否则默认线程数变化后暂停再恢复会得到不同值 → 分片计划变化 → 清空已有 part 重下。
+        if (task.threadCount <= 0) {
+            dao.updateThreadCount(id, threadCount)
+        }
         val chunkCount = chunkCountFor(total, threadCount)
         val chunkSize = ceil(total.toDouble() / chunkCount).toLong()
         val chunkDir = chunkDirOf(id).apply { mkdirs() }

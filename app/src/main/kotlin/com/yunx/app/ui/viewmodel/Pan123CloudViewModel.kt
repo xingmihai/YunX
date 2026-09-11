@@ -346,8 +346,8 @@ class Pan123CloudViewModel(
         }
     }
 
-    /** 下载弹窗确认：用已生成的直链入队 */
-    fun startDownload() {
+    /** 下载弹窗确认：用已生成的直链入队（threadCount 为弹窗选定的线程数，0 = 用默认） */
+    fun startDownload(threadCount: Int = 0) {
         val pd = pendingDownload ?: return
         downloadLink = null
         pendingDownload = null
@@ -359,7 +359,8 @@ class Pan123CloudViewModel(
                     fileName = pd.fileName,
                     size = pd.size,
                     platform = DownloadPlatform.PAN123,
-                    headers = pd.headers
+                    headers = pd.headers,
+                    threadCount = threadCount
                 )
                 cloudMessage = "已加入下载：${pd.fileName}"
                 actionFile = null
