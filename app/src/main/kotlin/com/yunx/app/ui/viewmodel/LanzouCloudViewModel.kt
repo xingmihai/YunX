@@ -26,6 +26,8 @@ import com.yunx.app.data.network.LanzouApi
 import com.yunx.app.data.network.LanzouConstants
 import com.yunx.app.data.network.LanzouFile
 import com.yunx.app.data.network.LanzouFolder
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -63,6 +65,15 @@ class LanzouCloudViewModel(private val dao: LanzouAccountDao) : ViewModel() {
         LanzouPathNode(LanzouConstants.ROOT_FOLDER_ID, "根目录")
     )
 
+    /** 上一次加载任务；新导航时取消，避免旧请求回写 uiState */
+    private var loadJob: Job? = null
+    /**
+     * 加载代次。仅靠 cancel 仍存在竞态：协程已跑到「取消检查点之后」时，
+     * cancel 拦不住它继续写 uiState。故再用代次号做一道兜底 ——
+     * 每次开新加载就 +1，回写前发现代次已变则丢弃结果。
+     */
+    private var loadGeneration = 0
+
     fun loadRoot() {
         path = listOf(LanzouPathNode(LanzouConstants.ROOT_FOLDER_ID, "根目录"))
         load(path.last().id)
@@ -82,10 +93,14 @@ class LanzouCloudViewModel(private val dao: LanzouAccountDao) : ViewModel() {
     fun refresh() = load(path.last().id)
 
     private fun load(folderId: String) {
-        viewModelScope.launch {
+        // 取消上一次加载，并递增代次（两道防线，见 [loadGeneration] 注释）
+        loadJob?.cancel()
+        val myGeneration = ++loadGeneration
+        loadJob = viewModelScope.launch {
             _uiState.value = LanzouCloudUiState.Loading
             val account = dao.getAccount()
             if (account == null) {
+                if (myGeneration != loadGeneration) return@launch
                 _uiState.value = LanzouCloudUiState.Error("未登录蓝奏云")
                 return@launch
             }
@@ -94,13 +109,14 @@ class LanzouCloudViewModel(private val dao: LanzouAccountDao) : ViewModel() {
 
             val token = vei ?: api.fetchVei(cookie, uid).getOrNull()
             if (token == null) {
+                if (myGeneration != loadGeneration) return@launch
                 _uiState.value = LanzouCloudUiState.Error("登录状态已失效，请重新登录")
                 return@launch
             }
             vei = token
 
             var folders = api.listFolders(cookie, uid, folderId, token)
-            var files = api.listFiles(cookie, uid, folderId, token)
+            var files = api.listAllFiles(cookie, uid, folderId, token)
 
             // 两个都失败：很可能是 vei 过期，取新的再试一次
             if (folders.isFailure && files.isFailure) {
@@ -108,18 +124,20 @@ class LanzouCloudViewModel(private val dao: LanzouAccountDao) : ViewModel() {
                 if (fresh != null) {
                     vei = fresh
                     folders = api.listFolders(cookie, uid, folderId, fresh)
-                    files = api.listFiles(cookie, uid, folderId, fresh)
+                    files = api.listAllFiles(cookie, uid, folderId, fresh)
                 }
             }
 
             val folderList = folders.getOrDefault(emptyList())
             val fileList = files.getOrDefault(emptyList())
             if (folders.isFailure && files.isFailure) {
+                if (myGeneration != loadGeneration) return@launch
                 _uiState.value = LanzouCloudUiState.Error(
                     folders.exceptionOrNull()?.message ?: "加载失败"
                 )
                 return@launch
             }
+            if (myGeneration != loadGeneration) return@launch
             _uiState.value = LanzouCloudUiState.Loaded(folderList, fileList, path)
         }
     }

@@ -34,6 +34,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -108,6 +109,19 @@ fun LanzouLoginScreen(
             )
         }
     ) { padding ->
+        // ★ WebView 必须在离开页面时 destroy()：否则它的资源与浏览状态（含登录态）
+        //   会一直留着，反复进出登录页会累积多个实例。
+        var webViewRef by remember { mutableStateOf<WebView?>(null) }
+        DisposableEffect(Unit) {
+            onDispose {
+                webViewRef?.apply {
+                    stopLoading()
+                    webViewClient = WebViewClient()
+                    destroy()
+                }
+                webViewRef = null
+            }
+        }
         AndroidView(
             modifier = Modifier.padding(padding).fillMaxSize(),
             factory = { ctx ->
@@ -118,6 +132,7 @@ fun LanzouLoginScreen(
                     webViewClient = WebViewClient()
                     // 未登录时会跳转登录页；uid 未知，先打开后台首页由服务端重定向
                     loadUrl("https://pc.woozooo.com/mydisk.php")
+                    webViewRef = this
                 }
             }
         )

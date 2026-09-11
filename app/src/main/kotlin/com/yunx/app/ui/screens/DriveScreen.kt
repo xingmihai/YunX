@@ -493,16 +493,6 @@ fun DriveScreen(
 
     // 已登录 123：点击卡片弹出账号信息底部弹窗
     if (showPan123Sheet && pan123Account != null) {
-        if (showLanzouSheet && lanzouAccount != null) {
-            LanzouAccountSheet(
-                account = lanzouAccount,
-                onLogout = {
-                    onLanzouLogout()
-                    showLanzouSheet = false
-                },
-                onDismiss = { showLanzouSheet = false }
-            )
-        }
         Pan123AccountSheet(
             account = pan123Account,
             onLogout = {
@@ -510,6 +500,20 @@ fun DriveScreen(
                 showPan123Sheet = false
             },
             onDismiss = { showPan123Sheet = false }
+        )
+    }
+
+    // ★ 已登录蓝奏云：点击卡片弹出账号信息底部弹窗。
+    //   必须与 Pan123 的弹窗**平级**：嵌在 Pan123 的 if 里会导致
+    //   点蓝奏云的更多按钮时，必须 Pan123 弹窗同时打开才显示得出来。
+    if (showLanzouSheet && lanzouAccount != null) {
+        LanzouAccountSheet(
+            account = lanzouAccount,
+            onLogout = {
+                onLanzouLogout()
+                showLanzouSheet = false
+            },
+            onDismiss = { showLanzouSheet = false }
         )
     }
 }

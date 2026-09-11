@@ -128,7 +128,7 @@ class LanzouApi {
         }
     }
 
-    /** task=5：列出 [folderId] 下的文件（[pg] 为分页页码，从 1 开始） */
+    /** task=5：列出 [folderId] 下第 [pg] 页的文件（页码从 1 开始） */
     suspend fun listFiles(
         cookie: String,
         uid: String,
@@ -160,6 +160,40 @@ class LanzouApi {
         }
     }
 
+    /**
+     * task=5：列出 [folderId] 下的**全部**文件（自动翻页）。
+     *
+     * ★ 为什么必须翻页：接口单页有上限，只取第 1 页会让超量文件被静默丢弃 ——
+     *   用户看到「文件夹里少了一堆东西」却没有任何提示。
+     *
+     * ★ 终止条件用「取到空页」而非依赖分页元数据：蓝奏云响应里没有稳定的
+     *   总页数/总条数字段（无官方文档），空页是唯一可靠的终点信号。
+     *   另加 [MAX_PAGES] 上限兜底，防止接口异常时无限循环。
+     */
+    suspend fun listAllFiles(
+        cookie: String,
+        uid: String,
+        folderId: String,
+        vei: String
+    ): Result<List<LanzouFile>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val all = mutableListOf<LanzouFile>()
+            for (pg in 1..MAX_PAGES) {
+                val page = listFiles(cookie, uid, folderId, vei, pg).getOrElse {
+                    // 第 1 页失败直接抛出（由上层判定 vei 过期等）；
+                    // 后续页失败则带上已取到的部分，避免整次浏览失败
+                    if (pg == 1) throw it
+                    return@runCatching all.toList()
+                }
+                if (page.isEmpty()) break
+                all.addAll(page)
+                // 不足一页说明已是最后一页，无需再请求
+                if (page.size < PAGE_SIZE) break
+            }
+            all.toList()
+        }
+    }
+
     private fun callText(cookie: String, uid: String, params: Map<String, String>): String {
         client.newCall(request(cookie, uid, params)).execute().use { response ->
             if (!response.isSuccessful) error("请求失败：HTTP ${response.code}")
@@ -168,6 +202,12 @@ class LanzouApi {
     }
 
     companion object {
+        /** 文件列表单页条数（蓝奏云网页端实测值；用于判断是否还有下一页） */
+        private const val PAGE_SIZE = 50
+
+        /** 翻页上限兜底：接口异常时防止无限循环 */
+        private const val MAX_PAGES = 200
+
         /**
          * 把 "80.1 M" 这类文本换算成字节。
          *
@@ -178,7 +218,7 @@ class LanzouApi {
         fun parseSize(text: String?): Long {
             val raw = text?.trim().orEmpty()
             if (raw.isEmpty()) return 0L
-            val parts = raw.split(Regex("\s+"))
+            val parts = raw.split(Regex("""\s+"""))
             val num = parts.firstOrNull()?.toDoubleOrNull() ?: return 0L
             val unit = parts.getOrNull(1)?.uppercase().orEmpty()
             val multiplier = when {

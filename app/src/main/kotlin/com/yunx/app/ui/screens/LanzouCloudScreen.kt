@@ -42,6 +42,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -60,6 +61,10 @@ fun LanzouCloudScreen(
     modifier: Modifier = Modifier
 ) {
     val state by viewModel.uiState.collectAsState()
+
+    // ★ 必须显式触发首次加载：ViewModel 初始状态是 Loading，而它自己不会自动开跑。
+    //   少了这段，页面会一直转圈，直到用户手动点刷新。
+    LaunchedEffect(Unit) { viewModel.loadRoot() }
 
     Column(modifier = modifier.fillMaxSize()) {
         Row(
