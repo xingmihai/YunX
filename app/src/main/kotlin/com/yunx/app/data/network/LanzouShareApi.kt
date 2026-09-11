@@ -84,6 +84,21 @@ class LanzouShareApi {
         cookieStore.getOrPut(host) { mutableMapOf() }["codelen"] = "1"
     }
 
+    /**
+     * 导出该 host 的 Cookie 请求头串（形如 `codelen=1; m_adb1=...; m_ad3=...`）。
+     *
+     * ★★ 为什么必须导出：下载由 DownloadManager 用**独立的 OkHttp 实例**发起，
+     *   不会走本类的 CookieJar。而这些匿名 Cookie（codelen / m_adb1 / m_ad3）
+     *   正是服务器用来校验会话连续性的 —— 缺了它们，直链会返回
+     *   `200 + text/html`（广告/错误页）而不是文件，实测已确认：
+     *     downloadChunk: task=7 返回 text/html（疑似广告/错误页），终止
+     *   取链与下载必须使用同一份 Cookie。
+     */
+    fun cookieHeader(host: String): String {
+        val bucket = cookieStore[host] ?: return ""
+        return bucket.entries.joinToString("; ") { "${it.key}=${it.value}" }
+    }
+
     // ---------- 页面抓取 ----------
 
     /**

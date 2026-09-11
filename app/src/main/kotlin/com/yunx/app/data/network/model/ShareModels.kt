@@ -80,7 +80,15 @@ data class DownloadLink(
     val size: Long,
     val cleanupDirFid: String? = null,
     /** 是否为 HLS（m3u8）转码流地址：下载走 HLS 分片合并路径（UC play 绕过会员墙） */
-    val isHls: Boolean = false
+    val isHls: Boolean = false,
+    /**
+     * 下载该直链必须携带的 Cookie（蓝奏云专用，其余平台为空）。
+     *
+     * ★ 蓝奏云直链校验匿名 Cookie（codelen / m_adb1 / m_ad3），
+     *   缺了会返回 200 + text/html 而非文件。取链时由 ShareApi 导出并随链带回，
+     *   下载时再原样发出，保证「取链与下载同一份 Cookie」。
+     */
+    val cookie: String = ""
 )
 
 /** UC 转码播放流（绕过非会员视频下载被换成宣传片的问题；url 为 m3u8/fmp4 分片地址） */

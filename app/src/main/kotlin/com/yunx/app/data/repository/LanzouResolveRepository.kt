@@ -253,7 +253,9 @@ class LanzouResolveRepository : ShareResolveRepository {
                     fid = file.fid,
                     filename = file.fname,
                     downloadUrl = vkjxld + hyggid + LanzouShareConstants.LANOSSO_SUFFIX,
-                    size = file.fsize
+                    size = file.fsize,
+                    // ★ 取链与下载必须同一份 Cookie，否则直链返回 HTML 而非文件
+                    cookie = api.cookieHeader(data.host)
                 )
             )
         }
@@ -281,7 +283,8 @@ class LanzouResolveRepository : ShareResolveRepository {
                 fid = file.fid,
                 filename = direct.filename.ifBlank { file.fname },
                 downloadUrl = direct.url,
-                size = file.fsize
+                size = file.fsize,
+                cookie = api.cookieHeader(data.host)
             )
         )
     }

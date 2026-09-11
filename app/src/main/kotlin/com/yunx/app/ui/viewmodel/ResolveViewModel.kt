@@ -792,14 +792,13 @@ class ResolveViewModel(
                 // Referer 必须是**实际分享域名**（域名会漂移，不能写常量）。
                 // 从会话里取；取不到就只带 UA，避免拼出错误的 Referer 触发 403。
                 val host = session?.stoken?.let { LanzouShareSessionData.decode(it)?.host }
-                if (host.isNullOrBlank()) {
-                    mapOf("User-Agent" to LanzouShareConstants.USER_AGENT)
-                } else {
-                    mapOf(
-                        "User-Agent" to LanzouShareConstants.USER_AGENT,
-                        "Referer" to "https://$host/"
-                    )
-                }
+                val base = mutableMapOf("User-Agent" to LanzouShareConstants.USER_AGENT)
+                if (!host.isNullOrBlank()) base["Referer"] = "https://$host/"
+                // ★ 关键：带解析时那份匿名 Cookie（codelen / m_adb1 / m_ad3）。
+                //   缺了它直链会返回 200 + text/html 而不是文件
+                //   （实测：downloadChunk 返回 text/html 终止）。
+                if (link.cookie.isNotBlank()) base["Cookie"] = link.cookie
+                base
             }
             // 夸克：防盗链需固定 Referer（对齐 AList quark_uc）
             else -> mapOf(
