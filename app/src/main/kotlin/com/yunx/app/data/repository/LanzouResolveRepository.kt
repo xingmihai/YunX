@@ -2,6 +2,7 @@ package com.yunx.app.data.repository
 
 import com.yunx.app.data.network.LanzouApi
 import com.yunx.app.data.network.LanzouShareApi
+import com.yunx.app.data.network.ShareLinkParser
 import com.yunx.app.data.network.LanzouShareConstants
 import com.yunx.app.data.network.LanzouShareSessionData
 import com.yunx.app.data.network.model.DownloadLink
@@ -39,7 +40,11 @@ class LanzouResolveRepository : ShareResolveRepository {
         val folderFileId = LanzouShareConstants.FOLDER_FILE_ID_REGEX.find(html)
             ?.groupValues?.getOrNull(1).orEmpty()
 
-        val effectivePwd = pwd?.trim().orEmpty()
+        // ★ 密码回退：pwd 为空时要退回链接文案里带的提取码。
+        //   此前直接 orEmpty()，若调用方只传了链接（含「密码：xxx」文案）而没单独传 pwd，
+        //   提取码就整段丢失 —— 与 Quark 实现的语义不一致。
+        val effectivePwd = pwd?.trim().takeUnless { it.isNullOrBlank() }
+            ?: ShareLinkParser.parse(link)?.pwd.orEmpty()
 
         val data = if (folderFileId.isNotBlank()) {
             // 文件夹分享：把 filemoreajax.php 所需参数一并取出存进 session
@@ -69,6 +74,30 @@ class LanzouResolveRepository : ShareResolveRepository {
         val data = LanzouShareSessionData.decode(session.stoken)
             ?: return Result.failure(IllegalStateException("会话已失效，请重新解析"))
 
+        // ★ 参数完整性检查（必须在发请求前做）：
+        //   受密码保护的文件夹页面，t / k / puid / uid 是密码验证成功后服务端才下发的，
+        //   首页 HTML 里取不到。带着空参数请求 filemoreajax.php，服务端只会回一句
+        //   「请刷新，重试0」这类无意义文案，用户完全不知道发生了什么。
+        if (data.isFolder) {
+            val missing = buildList {
+                if (data.folderFileId.isBlank()) add("文件夹ID")
+                if (data.t.isBlank()) add("t")
+                if (data.k.isBlank()) add("k")
+                if (data.puid.isBlank()) add("puid")
+                if (data.uid.isBlank()) add("uid")
+            }
+            if (missing.isNotEmpty()) {
+                val hint = if (data.pwd.isBlank()) {
+                    "该文件夹需要提取码，请填写后重试"
+                } else {
+                    "已填写提取码，但仍未能从页面取得参数（该分享可能需要在页面内先提交一次密码）"
+                }
+                return Result.failure(
+                    IllegalStateException("$hint（缺失：${missing.joinToString("、")}）")
+                )
+            }
+        }
+
         // 单文件分享：列表里就是它自己
         if (!data.isFolder) {
             return Result.success(
@@ -92,9 +121,18 @@ class LanzouResolveRepository : ShareResolveRepository {
             }
             when (result.status) {
                 LanzouShareApi.ListStatus.BAD_PWD ->
-                    return Result.failure(IllegalStateException(result.message))
+                    return Result.failure(
+                        IllegalStateException("提取码错误或已失效")
+                    )
                 LanzouShareApi.ListStatus.OTHER ->
-                    return Result.failure(IllegalStateException(result.message))
+                    // ★ 不裸透传服务端 info：它会返回「请刷新，重试0」这类对用户无意义的文案。
+                    //   带上参数状态，用户/开发者一眼能看出是过期还是结构变化。
+                    return Result.failure(
+                        IllegalStateException(
+                            "获取文件列表失败（蓝奏云返回：${result.message}）" +
+                                "。若已填写提取码仍失败，多为页面参数已过期，请重新解析链接"
+                        )
+                    )
                 LanzouShareApi.ListStatus.EMPTY -> return Result.success(all)
                 LanzouShareApi.ListStatus.OK -> {
                     result.items.forEach { o ->
