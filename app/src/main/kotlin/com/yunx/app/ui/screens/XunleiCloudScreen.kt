@@ -170,7 +170,7 @@ fun XunleiCloudScreen(
     viewModel.downloadLink?.let { link ->
         DownloadLinkDialog(
             link = link,
-            onDownload = { viewModel.startDownload() },
+            onDownload = { threads -> viewModel.startDownload(threads) },
             onDismiss = { viewModel.dismissDownloadDialog() }
         )
     }

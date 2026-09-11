@@ -159,7 +159,7 @@ class DownloadManager(
     private val context: Context,
     private val dao: DownloadTaskDao,
     private val downloader: ChunkDownloader,
-    /** 下载线程数提供者（按平台，可在设置中修改，动态生效），默认 32 */
+    /** 线程数兜底提供者：仅当任务未在下载时指定线程数时生效（按平台给默认值，默认 32，迅雷 8） */
     private val threadProvider: (String) -> Int = { 32 },
     /** 自定义下载保存目录提供者（SAF tree Uri，可空）；null 时保存到系统默认 Download */
     private val saveDirProvider: () -> String? = { null },
@@ -291,8 +291,10 @@ class DownloadManager(
         headers: Map<String, String> = emptyMap(),
         /** 已知文件大小（字节）；-1 表示未知，需探测 */
         size: Long = -1L,
-        /** 下载来源平台标识（按平台应用下载线程数设置）；通用/手动添加传空串 */
+        /** 下载来源平台标识（用于未指定线程数时按平台取默认值）；通用/手动添加传空串 */
         platform: String = "",
+        /** 本次下载选定的线程数，写入任务后锁定；0/负数 = 未指定，回退到 threadProvider 默认值 */
+        threadCount: Int = 0,
         /** 下载成功完成后的清理回调（如删除网盘临时转存文件）；失败/取消不触发 */
         onComplete: suspend () -> Unit = {}
     ): Long {
@@ -307,7 +309,8 @@ class DownloadManager(
                 url = url,
                 fileName = safeName,
                 requestHeadersJson = encodeHeaders(headers),
-                platform = platform
+                platform = platform,
+                threadCount = threadCount.coerceAtLeast(0)
             )
         )
         // 保存请求头（Cookie/UA），暂停后恢复仍需携带
@@ -327,7 +330,7 @@ class DownloadManager(
         val headers = loadPersistedHeaders(id)
         val valid = runCatching { downloader.getTotalSize(task.url, headers) != null }.getOrDefault(false)
         if (!valid) return false
-        enqueue(task.url, task.fileName, headers, task.totalSize, task.platform)
+        enqueue(task.url, task.fileName, headers, task.totalSize, task.platform, task.threadCount)
         return true
     }
 
@@ -593,7 +596,16 @@ class DownloadManager(
         // 取到大小后再次检查取消（暂停可能发生在 getTotalSize 期间）
         if (!isTaskActive()) return
 
-        val threadCount = threadProvider(task.platform).coerceAtLeast(1)
+        // 线程数以「下载时选定」为准并锁定：任务级 threadCount > 0 时不再读设置，
+        // 避免跨会话改线程数导致分片区间错位（plan.txt 签名校验会清空旧 part 重下）
+        val threadCount = task.threadCount.takeIf { it > 0 }
+            ?: threadProvider(task.platform)
+            .coerceAtLeast(1)
+        // ★ 首次运行（旧任务/未指定线程数的入口）必须把解析出的线程数落库：
+        //   否则默认线程数变化后暂停再恢复会得到不同值 → 分片计划变化 → 清空已有 part 重下。
+        if (task.threadCount <= 0) {
+            dao.updateThreadCount(id, threadCount)
+        }
         val chunkCount = chunkCountFor(total, threadCount)
         val chunkSize = ceil(total.toDouble() / chunkCount).toLong()
         val chunkDir = chunkDirOf(id).apply { mkdirs() }

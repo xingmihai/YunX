@@ -29,27 +29,20 @@ class SettingsRepository(context: Context) {
     private val prefs = context.applicationContext
         .getSharedPreferences("yunx_settings", Context.MODE_PRIVATE)
 
-    /** 下载线程数（通用/手动添加，分片并发数），默认 32，上限 512 */
-    var downloadThreads: Int
-        get() = downloadThreadsFor(DownloadPlatform.GENERIC)
-        set(value) = setDownloadThreads(DownloadPlatform.GENERIC, value)
-
-    /** 获取指定平台的下载线程数；迅雷固定 8，其余默认 32、上限 512 */
-    fun downloadThreadsFor(platform: String): Int {
-        if (platform == DownloadPlatform.XUNLEI) return XUNLEI_DOWNLOAD_THREADS
-        return prefs.getInt(prefsKey(platform), DEFAULT_DOWNLOAD_THREADS)
+    /** 最近一次在「下载直链」弹窗中选择的线程数（下次弹窗预填，仍可修改） */
+    var lastDownloadThreads: Int
+        get() = prefs.getInt("last_download_threads", DEFAULT_DOWNLOAD_THREADS)
             .coerceIn(1, MAX_DOWNLOAD_THREADS)
-    }
+        set(value) {
+            prefs.edit().putInt("last_download_threads", value.coerceIn(1, MAX_DOWNLOAD_THREADS)).apply()
+        }
 
-    /** 设置指定平台的下载线程数；迅雷不可修改 */
-    fun setDownloadThreads(platform: String, value: Int) {
-        if (platform == DownloadPlatform.XUNLEI) return
-        prefs.edit().putInt(prefsKey(platform), value.coerceIn(1, MAX_DOWNLOAD_THREADS)).apply()
-    }
-
-    private fun prefsKey(platform: String): String =
-        if (platform.isBlank() || platform == DownloadPlatform.GENERIC) "download_threads"
-        else "download_threads_$platform"
+    /**
+     * 未在下载时指定线程数时的兜底值（手动添加、更新 APK、批量下载等入口）。
+     * 迅雷固定 8：其 CDN 对单文件并发 Range 有阈值，超过会被降级为 200 整文件。
+     */
+    fun defaultThreadsFor(platform: String): Int =
+        if (platform == DownloadPlatform.XUNLEI) XUNLEI_DOWNLOAD_THREADS else lastDownloadThreads
 
     /** 自定义下载保存目录（SAF tree Uri，content://...）；null/空 = 系统默认 Download 目录 */
     var downloadDirUri: String?

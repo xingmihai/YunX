@@ -41,6 +41,10 @@ interface DownloadTaskDao {
     @Query("UPDATE download_task SET chunkCount = :chunkCount, plannedTotalSize = :totalSize WHERE id = :id")
     suspend fun updatePlan(id: Long, chunkCount: Int, totalSize: Long)
 
+    /** 落库下载时选定的线程数（含按平台推导的默认值），使任务后续暂停/恢复始终沿用同一分片计划 */
+    @Query("UPDATE download_task SET threadCount = :threadCount WHERE id = :id")
+    suspend fun updateThreadCount(id: Long, threadCount: Int)
+
     @Query("UPDATE download_task SET requestHeadersJson = :encryptedHeaders WHERE id = :id")
     suspend fun updateRequestHeaders(id: Long, encryptedHeaders: String)
 
