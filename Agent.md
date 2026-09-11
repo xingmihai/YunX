@@ -355,3 +355,28 @@ private const val STAGGER_CAP = 8; STAGGER_MS = 25L  // 错峰建连，平摊 TC
 
 改动 Release 命名或 `UpdateChecker` 解析逻辑时，需同时更新 `v1.3.0` 等已发布 Release 的名称，
 否则历史 Release 仍会用旧名称参与 Atom 解析。
+
+---
+
+## 11. 更新检测只走 edge 镜像的网页端点，不用 REST API
+
+`UpdateChecker` 的所有请求统一走 `https://edge.gh.xmhai.cn/github.com/<owner>/<repo>`：
+
+| 用途 | 路径 |
+|---|---|
+| 最新 Release | `releases.atom` |
+| 附件列表 | `releases/expanded_assets/<tag>` |
+| 下载直链 | `releases/download/<tag>/<file>.apk` |
+
+不用 `api.github.com` 的原因：
+- 未认证请求 60 次/小时/IP，共享出口 IP 极易被打满 → 403 被误报为「检查更新失败」；
+- 更关键的是 **REST 与网页端点返回的 body 格式不同**（Markdown vs HTML），
+  双通道需要两套解析逻辑，是 bug 温床（曾因此出现「弹窗没渲染成 Markdown」）。
+
+两条硬约束：
+1. Atom 的 `<content>` 是 HTML，必须经 `htmlToMarkdown()` 转 Markdown 再交给 `MarkdownText`；
+2. `mirrorUrl()` 必须先把 edge 直链还原为 GitHub 原始直链再套 gh-proxy，
+   直接拼接会得到 `gh-proxy.org/https://edge.gh.xmhai.cn/...` 这种无效套娃链接。
+
+`extractTag` 用 `/releases/tag/` 定位而非写死 `github.com`：镜像可能改写 href 域名，
+写死会导致提取失败并静默回退到 `<title>`（而 title 是 Release 名称，不是 tag）。

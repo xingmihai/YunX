@@ -23,64 +23,41 @@ import com.yunx.app.data.network.HttpClients
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.Request
-import org.json.JSONObject
 
 /**
- * GitHub Release 更新检测。
+ * GitHub Release 更新检测 —— **只走 edge 加速镜像的网页端点，不用 REST API**。
  *
- * 三级取值策略（★ 核心：未认证请求只有 60 次/小时/IP，共享出口 IP 极易被打满）：
- * 1. REST API `api.github.com/repos/xingmihai/YunX/releases/latest`，带 `If-None-Match` 条件请求
- *    —— 命中 304 时**不计入限流额度**，日常检查基本零消耗；
- * 2. 被限流（403 + X-RateLimit-Remaining=0）时读 `X-RateLimit-Reset` 进入冷却期，
- *    冷却期内不再触碰 API，避免每次开 App 都浪费请求并误报「检查更新失败」；
- * 3. 冷却期或 API 不可用时，走 `github.com` 网页端点（releases.atom / expanded_assets），
- *    该域名不属于 REST API 限流桶，可正常取到最新 tag 与 APK 直链。
+ * 为什么不用 `api.github.com`：未认证请求只有 60 次/小时/IP，移动网络与公司/校园
+ * 共享出口 IP 极易被同网段占满，更新检测会 403 并被误报为「检查更新失败」。
+ * 而且 REST 与网页端点返回的 body 格式不同（Markdown vs HTML），
+ * 双通道意味着两套解析逻辑，是 bug 温床。
+ *
+ * 统一走镜像站 https://edge.gh.xmhai.cn/github.com/<owner>/<repo>：
+ * - `releases.atom` —— 最新 Release 的 tag、更新时间、HTML 形式的更新说明
+ * - `releases/expanded_assets/<tag>` —— 该 tag 的附件列表（网页异步展开片段）
+ * - `releases/download/<tag>/<file>.apk` —— 下载直链
+ *
+ * 注意：Atom 的 `<content>` 是 **HTML**（GitHub 已渲染），必须经
+ * `htmlToMarkdown()` 转成 Markdown 后才能交给 MarkdownText 渲染。
  */
 object UpdateChecker {
 
     private const val OWNER = "xingmihai"
     private const val REPO = "YunX"
 
-    private const val RELEASES_LATEST_URL =
-        "https://api.github.com/repos/$OWNER/$REPO/releases/latest"
+    /** edge 加速镜像根地址：镜像站路径为「<前缀>/github.com/<owner>/<repo>」 */
+    private const val EDGE_BASE = "https://edge.gh.xmhai.cn/github.com/$OWNER/$REPO"
 
-    /** 网页端点：Release Atom 源（github.com，不受 REST API 限流约束） */
-    private const val RELEASES_ATOM_URL =
-        "https://github.com/$OWNER/$REPO/releases.atom"
+    /** Release Atom 源 */
+    private const val RELEASES_ATOM_URL = "$EDGE_BASE/releases.atom"
 
-    /** 网页端点：指定 tag 的附件列表（GitHub 网页异步展开 assets 用的片段） */
-    private fun expandedAssetsUrl(tag: String) =
-        "https://github.com/$OWNER/$REPO/releases/expanded_assets/$tag"
-
-    /** GitHub 下载加速镜像站前缀（国内直连 GitHub 慢/失败时的兜底下载通道） */
-    const val MIRROR_PREFIX = "https://cdn.gh-proxy.org/"
-
-    /** 把 GitHub release 直链转成镜像站直链：https://cdn.gh-proxy.org/<原直链> */
-    fun mirrorUrl(url: String): String = MIRROR_PREFIX + url
-
-    private const val PREFS = "yunx_update_check"
-    private const val KEY_ETAG = "etag"
-    private const val KEY_CACHE = "cached_json"
-    private const val KEY_RESET_AT = "rate_limit_reset_at"
-
-    /** API 限流冷却截止时间戳（毫秒）；在此时间前不再请求 REST API */
-    @Volatile
-    private var rateLimitResetAt: Long = 0L
-
-    /** context 不可用时的进程内兜底缓存（单次会话内有效） */
-    @Volatile
-    private var memEtag: String? = null
-
-    @Volatile
-    private var memCache: String? = null
-
-    @Volatile
-    private var stateRestored = false
+    /** 指定 tag 的附件列表（GitHub 网页异步展开 assets 用的片段） */
+    private fun expandedAssetsUrl(tag: String) = "$EDGE_BASE/releases/expanded_assets/$tag"
 
     data class Asset(
         val name: String,
         val downloadUrl: String,
-        /** 附件体积（字节）；网页兜底通道拿不到时为 null */
+        /** 附件体积（字节）；从 expanded_assets 的「6.24 MB」文本解析，解析不到时为 null */
         val sizeBytes: Long? = null
     )
 
@@ -133,102 +110,22 @@ object UpdateChecker {
         }.getOrNull() ?: "1.0"
 
     /**
-     * 请求 GitHub 最新 Release；网络失败 / 仓库无 Release（404）返回 null。
+     * 请求最新 Release；网络失败或仓库无 Release 时返回 null。
      *
-     * @param context 传入后可跨进程复用 ETag 缓存与限流冷却时间（不传则仅内存生效）
+     * @param context 保留参数以兼容调用点；当前无状态需要持久化
      */
+    @Suppress("UNUSED_PARAMETER")
     suspend fun fetchLatestRelease(context: Context? = null): Release? = withContext(Dispatchers.IO) {
-        restoreState(context)
-        // 冷却期内不碰 API，直接走网页端点
-        if (System.currentTimeMillis() < rateLimitResetAt) {
-            return@withContext fetchViaWeb()
-        }
-        fetchViaApi(context) ?: fetchViaWeb()
+        fetchViaAtom()
     }
 
-    // ------------------------------------------------------------------ REST API
-
-    private suspend fun fetchViaApi(context: Context?): Release? = runCatching {
-        val p = prefs(context)
-        val etag = p?.getString(KEY_ETAG, null) ?: memEtag
-        val builder = Request.Builder()
-            .url(RELEASES_LATEST_URL)
-            .header("Accept", "application/vnd.github+json")
-            .header("User-Agent", "YunX")
-        // 条件请求：服务端内容未变时返回 304，且 304 不计入限流额度
-        if (!etag.isNullOrBlank()) builder.header("If-None-Match", etag)
-
-        val client = HttpClients.apiClient()
-        client.newCall(builder.get().build()).execute().use { resp ->
-            val remaining = resp.header("X-RateLimit-Remaining")?.toLongOrNull()
-            val resetSec = resp.header("X-RateLimit-Reset")?.toLongOrNull()
-
-            when (resp.code) {
-                304 -> {
-                    // 内容未变化：直接复用上次缓存的完整响应
-                    val cached = p?.getString(KEY_CACHE, null) ?: memCache
-                    return@runCatching cached?.let { parseRelease(it) }
-                }
-                403 -> {
-                    // 额度耗尽（未认证 60 次/小时，移动网络/公司出口 IP 常被同网段占满）：
-                    // 记录重置时刻，冷却期内改走网页端点
-                    if (remaining == 0L && resetSec != null) {
-                        rateLimitResetAt = resetSec * 1000L + 5_000L
-                        p?.edit()?.putLong(KEY_RESET_AT, rateLimitResetAt)?.apply()
-                    }
-                    return@runCatching null
-                }
-                404 -> return@runCatching null // 仓库尚未发布任何 Release
-            }
-            if (!resp.isSuccessful) return@runCatching null
-
-            val body = resp.body?.string()
-            if (body.isNullOrBlank()) return@runCatching null
-            val newEtag = resp.header("ETag")
-            memEtag = newEtag
-            memCache = body
-            p?.edit()?.let { editor ->
-                if (newEtag != null) editor.putString(KEY_ETAG, newEtag) else editor.remove(KEY_ETAG)
-                editor.putString(KEY_CACHE, body)
-                editor.remove(KEY_RESET_AT)
-            }?.apply()
-            parseRelease(body)
-        }
-    }.getOrNull()
-
-    private fun parseRelease(json: String): Release? = runCatching {
-        val obj = JSONObject(json)
-        val tag = obj.optString("tag_name")
-        if (tag.isBlank()) return@runCatching null
-        val assets = buildList {
-            obj.optJSONArray("assets")?.let { arr ->
-                for (i in 0 until arr.length()) {
-                    val a = arr.optJSONObject(i) ?: continue
-                    add(
-                        Asset(
-                            name = a.optString("name"),
-                            downloadUrl = a.optString("browser_download_url"),
-                            sizeBytes = a.optLong("size", -1L).takeIf { it > 0 }
-                        )
-                    )
-                }
-            }
-        }
-        Release(
-            tagName = tag,
-            body = obj.optString("body"),
-            assets = assets,
-            publishedAt = obj.optString("published_at")
-        )
-    }.getOrNull()
-
-    // ------------------------------------------------------- 网页端点兜底（不限流）
+    // ------------------------------------------------------------- Atom 通道
 
     /**
-     * 通过 github.com 网页端点获取最新 Release。
+     * 通过 edge 镜像的网页端点获取最新 Release。
      * Atom 源提供 tag 与更新说明，附件直链需要再取 expanded_assets 片段。
      */
-    private suspend fun fetchViaWeb(): Release? = runCatching {
+    private suspend fun fetchViaAtom(): Release? = runCatching {
         val atom = httpGet(RELEASES_ATOM_URL) ?: return@runCatching null
         // 只取第一个 entry（Atom 按发布时间倒序，首个即最新 Release）；
         // 多个 entry 时必须截断，否则后续标签解析会跨 entry 取到错误内容
@@ -244,7 +141,10 @@ object UpdateChecker {
             .substringBefore("</content>")
         Release(
             tagName = tag,
-            body = unescapeHtml(content).stripTags(),
+            // ★ Atom 的 <content> 是 **HTML**（GitHub 渲染后的产物），不是 Markdown 源码。
+            //   若只做 stripTags 会得到纯文本，结构（标题/列表/引用）全丢，
+            //   弹窗里再拿它当 Markdown 解析就等于没渲染。必须先转成 Markdown。
+            body = unescapeHtml(content).htmlToMarkdown(),
             assets = fetchAssetsFromWeb(tag),
             publishedAt = updated
         )
@@ -257,10 +157,12 @@ object UpdateChecker {
      * 3. 从 `<title>` 里正则抽取形如 `v1.3.0` 的版本号 —— Release 名称带前缀时的兜底
      */
     private fun extractTag(entry: String): String? {
-        val fromLink = entry.substringAfter("""href="https://github.com/$OWNER/$REPO/releases/tag/""", "")
+        // 用 "/releases/tag/" 定位而非写死域名：镜像站可能把 href 改写成自己的域名，
+        // 写死 github.com 会导致提取失败而静默回退到 title
+        val fromLink = entry.substringAfter("/releases/tag/", "")
             .substringBefore("\"", "")
             .trim()
-        if (fromLink.isNotBlank()) return fromLink
+        if (fromLink.isNotBlank() && !fromLink.contains('/')) return fromLink
 
         val fromId = entry.substringAfter("<id>", "")
             .substringBefore("</id>", "")
@@ -289,18 +191,39 @@ object UpdateChecker {
     /** 从网页片段解析 APK 直链：/xingmihai/YunX/releases/download/<tag>/<file>.apk */
     private suspend fun fetchAssetsFromWeb(tag: String): List<Asset> = runCatching {
         val html = httpGet(expandedAssetsUrl(tag)) ?: return@runCatching emptyList()
-        // 主匹配：完整 download 路径（带引号的 href）
-        val regex = Regex("href=\"/$OWNER/$REPO/releases/download/[^\"]+\\.apk\"")
-        val found = regex.findAll(html).mapNotNull { m ->
-            val path = m.value.substringAfter("href=\"").substringBefore("\"")
-            if (path.isBlank()) null else Asset(path.substringAfterLast('/'), "https://github.com$path")
-        }.toList()
-        if (found.isNotEmpty()) return@runCatching found
-        // 兜底：属性顺序/引号风格变化时，直接匹配 download 路径本身
-        Regex("/$OWNER/$REPO/releases/download/[^\"'\\s]+\\.apk").findAll(html).map { m ->
-            val path = m.value
-            Asset(path.substringAfterLast('/'), "https://github.com$path")
-        }.toList()
+        val href = Regex("/$OWNER/$REPO/releases/download/[^\"'\\s]+\\.apk")
+        val size = Regex("(\\d+(?:\\.\\d+)?)\\s*(KB|MB|GB)", RegexOption.IGNORE_CASE)
+
+        // ★ 按 <li> 切块再逐块配对：整个页面有多个附件，全局找体积会张冠李戴
+        //   （第一个附件可能匹配到第二个附件的体积）
+        val items = html.split("<li", ignoreCase = true).drop(1)
+        val assets = items.mapNotNull { item ->
+            val path = href.find(item)?.value ?: return@mapNotNull null
+            val name = path.substringAfterLast('/')
+            val bytes = size.find(item)?.let { m ->
+                val num = m.groupValues[1].toDoubleOrNull() ?: return@let null
+                val unit = m.groupValues[2].uppercase()
+                val factor = when (unit) {
+                    "KB" -> 1024L
+                    "MB" -> 1024L * 1024
+                    "GB" -> 1024L * 1024 * 1024
+                    else -> 1L
+                }
+                (num * factor).toLong()
+            }
+            Asset(
+                name = name,
+                downloadUrl = "$EDGE_BASE/releases/download/$tag/$name",
+                sizeBytes = bytes
+            )
+        }
+        assets.ifEmpty {
+            // 兜底：切块失败时退回全局匹配（此时拿不到体积）
+            href.findAll(html).map { m ->
+                val name = m.value.substringAfterLast('/')
+                Asset(name, "$EDGE_BASE/releases/download/$tag/$name")
+            }.toList()
+        }
     }.getOrDefault(emptyList())
 
     private fun httpGet(url: String): String? = runCatching {
@@ -315,24 +238,87 @@ object UpdateChecker {
         }
     }.getOrNull()
 
-    // ------------------------------------------------------------------ 状态持久化
-
-    private fun prefs(context: Context?) =
-        context?.applicationContext?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-
-    private fun restoreState(context: Context?) {
-        if (stateRestored) return
-        val p = prefs(context) ?: return // context 为空时暂不恢复，下次带 context 调用再试
-        stateRestored = true
-        rateLimitResetAt = p.getLong(KEY_RESET_AT, 0L)
-        memEtag = p.getString(KEY_ETAG, null)
-        memCache = p.getString(KEY_CACHE, null)
-    }
-
     private fun String.stripTags(): String =
         replace(Regex("<[^>]+>"), "\n")
             .replace(Regex("\n{3,}"), "\n\n")
             .trim()
+
+    // ------------------------------------------------- Atom 的 HTML → Markdown
+
+    private val BLOCK_CLOSE = Regex(
+        "</?(p|div|h[1-6]|li|ul|ol|blockquote|pre|tr|table|section)[^>]*>",
+        RegexOption.IGNORE_CASE
+    )
+    private val H_TAG = Regex("<h([1-6])[^>]*>(.*?)</h\\1>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
+    private val LI_TAG = Regex("<li[^>]*>(.*?)</li>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
+    private val QUOTE_BLOCK = Regex(
+        "<blockquote[^>]*>(.*?)</blockquote>",
+        setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)
+    )
+    private val STRONG = Regex("<(strong|b)[^>]*>(.*?)</\\1>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
+    private val EM = Regex("<(em|i)[^>]*>(.*?)</\\1>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
+    private val CODE_HTML = Regex("<code[^>]*>(.*?)</code>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
+    private val PRE_HTML = Regex("<pre[^>]*>(.*?)</pre>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
+    private val ANCHOR = Regex("<a\\s[^>]*href=\"([^\"]*)\"[^>]*>(.*?)</a>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
+    private val HR_HTML = Regex("<hr\\s*/?>", RegexOption.IGNORE_CASE)
+    /** `<br>` 后吃掉紧跟的空白/换行：源码中 `<br>` 后通常还有一个真实换行，
+     *  只替换标签会得到 `\n\n` → 段落断开，列表项续行被拆散 */
+    private val BR_HTML = Regex("<br\\s*/?>\\s*", RegexOption.IGNORE_CASE)
+
+    /**
+     * 把 Atom `<content>` 里的 HTML 转成 Markdown，使两个数据源（REST API 的 Markdown、
+     * Atom 的 HTML）在弹窗侧能用同一个 MarkdownText 渲染。
+     *
+     * 顺序有讲究：先抽出 `<pre>` 围栏整段保留（内部不做替换），再处理标题/列表/强调，
+     * 最后才去剩余标签 —— 反过来会把代码块里的 `<...>` 也吃掉。
+     */
+    private fun String.htmlToMarkdown(): String {
+        var s = this
+
+        // 1) 代码块整段抽成 ``` 围栏（内部内容原样保留）
+        s = PRE_HTML.replace(s) { m ->
+            val inner = m.groupValues[1].replace(Regex("<[^>]+>"), "")
+            "\n```\n${inner.trim()}\n```\n"
+        }
+        // 2) 引用块整段处理：内部先去掉块级标签，再逐行加 "> " 前缀。
+        //    若只在 <blockquote> 处插入 "> "，其内部的 <p> 会先换行 → 引用内容跑到块外
+        s = QUOTE_BLOCK.replace(s) { m ->
+            val inner = m.groupValues[1]
+                .replace(Regex("</?(p|div|br\\s*/?)[^>]*>", RegexOption.IGNORE_CASE), "\n")
+            val lines = inner.lineSequence()
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+            "\n" + lines.joinToString("\n") { "> $it" } + "\n"
+        }
+        // 3) 分隔线 / 换行
+        s = HR_HTML.replace(s, "\n---\n")
+        s = BR_HTML.replace(s, "\n")
+        // 4) 标题
+        s = H_TAG.replace(s) { m ->
+            "\n${"#".repeat(m.groupValues[1].toIntOrNull() ?: 2)} ${m.groupValues[2].trim()}\n"
+        }
+        // 5) 列表项
+        s = LI_TAG.replace(s) { m -> "- ${m.groupValues[1].trim()}" }
+        // 6) 强调与行内代码
+        s = STRONG.replace(s) { m -> "**${m.groupValues[2].trim()}**" }
+        s = EM.replace(s) { m -> "*${m.groupValues[2].trim()}*" }
+        s = CODE_HTML.replace(s) { m -> "`${m.groupValues[1].trim()}`" }
+        // 7) 链接：[文本](url)，无文本时只留 url
+        s = ANCHOR.replace(s) { m ->
+            val text = m.groupValues[2].replace(Regex("<[^>]+>"), "").trim()
+            val url = m.groupValues[1]
+            if (text.isBlank()) url else "[$text]($url)"
+        }
+        // 8) 块级标签收尾处补换行，保证分段
+        s = BLOCK_CLOSE.replace(s, "\n")
+        // 9) 剩余行内标签一并去掉
+        s = s.replace(Regex("<[^>]+>"), "")
+        // 10) 归一化空行
+        return s.lineSequence()
+            .joinToString("\n")
+            .replace(Regex("\n{3,}"), "\n\n")
+            .trim()
+    }
 
     private fun unescapeHtml(s: String): String = s
         .replace("&lt;", "<")

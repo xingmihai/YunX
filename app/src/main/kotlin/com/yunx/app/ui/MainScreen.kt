@@ -56,6 +56,7 @@ import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -63,7 +64,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
@@ -872,20 +872,6 @@ fun MainScreen() {
                             currentTab = MainTab.Download
                         }
                         SnackbarController.show("已加入下载，完成后点击「打开」即可安装")
-                    } else {
-                        SnackbarController.show("未找到 APK 下载链接")
-                    }
-                },
-                onDownloadMirror = {
-                    showUpdateDialog = false
-                    // 镜像站下载：GitHub 直连慢/失败时走国内加速镜像
-                    val apk = UpdateChecker.preferredApk(release.assets)
-                    if (apk != null) {
-                        scope.launch {
-                            downloadManager.enqueue(url = UpdateChecker.mirrorUrl(apk.downloadUrl), fileName = apk.name)
-                            currentTab = MainTab.Download
-                        }
-                        SnackbarController.show("已通过镜像站加入下载，完成后点击「打开」即可安装")
                     } else {
                         SnackbarController.show("未找到 APK 下载链接")
                     }
