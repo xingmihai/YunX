@@ -660,12 +660,17 @@ fun SettingsScreen(
         WebDavConfigDialog(
             initialUrl = settingsRepo.webDavUrl,
             initialUser = settingsRepo.webDavUser,
+            savedPassword = settingsRepo.webDavPassword,
             onDismiss = { showWebDavConfigDialog = false },
             onSave = { url, user, password ->
                 settingsRepo.webDavUrl = url
                 settingsRepo.webDavUser = user
-                if (password.isNotBlank()) settingsRepo.webDavPassword = password
-                SnackbarController.show("WebDAV 配置已保存")
+                // 只有真正要改密码时才调用，并**依据返回值提示**：
+                // 加密失败会保留原密码并返回 false，此时不能谎报「已保存」
+                val ok = if (password.isBlank()) true else settingsRepo.saveWebDavPassword(password)
+                SnackbarController.show(
+                    if (ok) "WebDAV 配置已保存" else "配置已保存，但密码加密失败，已保留原密码"
+                )
             }
         )
     }
@@ -1071,6 +1076,8 @@ private fun ExportAuthDialog(
 private fun WebDavConfigDialog(
     initialUrl: String,
     initialUser: String,
+    /** 已保存的密码（用于「留空表示不修改」时的连接测试）；不要回显到输入框 */
+    savedPassword: String,
     onDismiss: () -> Unit,
     onSave: (url: String, user: String, password: String) -> Unit
 ) {
@@ -1124,10 +1131,17 @@ private fun WebDavConfigDialog(
                             SnackbarController.show("请填写服务器地址与用户名")
                             return@TextButton
                         }
+                        // ★ 密码框留空表示「沿用已保存的密码」，测试连接必须同样沿用，
+                        //   否则测试一个已配置好的 WebDAV 会因空密码必然失败。
+                        val effectivePassword = password.ifBlank { savedPassword }
+                        if (effectivePassword.isBlank()) {
+                            SnackbarController.show("请先输入密码")
+                            return@TextButton
+                        }
                         testing = true
                         scope.launch {
                             val result = withContext(Dispatchers.IO) {
-                                WebDavClient(url, user, password).testConnection()
+                                WebDavClient(url, user, effectivePassword).testConnection()
                             }
                             testing = false
                             SnackbarController.show(

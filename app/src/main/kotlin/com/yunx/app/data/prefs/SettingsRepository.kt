@@ -170,29 +170,40 @@ class SettingsRepository(context: Context) {
      * purpose 固定为 "webdav_password"，作为 GCM 的 AAD 绑定用途，
      * 避免其他字段的密文被挪到此处复用。
      */
-    var webDavPassword: String
+    //
+    // ★ getter 无法表达「解密失败」，只能返回空串。因此**判断可用性必须看
+    //   [isWebDavConfigured]**：它要求密码能成功解密且非空。否则一旦 Keystore
+    //   密钥失效，App 会用空密码发起 Basic Auth，用户看到的是误导性的
+    //   「认证失败」，而非「本地凭据不可用」。
+    //
+    val webDavPassword: String
         get() {
             val stored = prefs.getString("webdav_password", null) ?: return ""
             return runCatching { credentialCipher.decrypt(stored, WEBDAV_PURPOSE) }
                 .getOrDefault("")
         }
-        set(value) {
-            if (value.isEmpty()) {
-                prefs.edit().remove("webdav_password").apply()
-                return
-            }
-            val enc = runCatching { credentialCipher.encrypt(value, WEBDAV_PURPOSE) }.getOrNull()
-            // 加密失败（Keystore 不可用）时宁可不存，也不要退回明文
-            if (enc == null) {
-                prefs.edit().remove("webdav_password").apply()
-                return
-            }
-            prefs.edit().putString("webdav_password", enc).apply()
-        }
 
-    /** WebDAV 是否已配置到可用的程度（地址与用户名均非空） */
+    /**
+     * 保存 WebDAV 密码。
+     *
+     * @return 是否保存成功。**加密失败（Keystore 不可用）时保留原有密文并返回 false** ——
+     *   绝不退回明文存储，也不删除已有凭据（否则编辑一个正常工作的配置会静默弄坏它）。
+     *   调用方须依据返回值决定如何提示用户。
+     */
+    fun saveWebDavPassword(value: String): Boolean {
+        if (value.isEmpty()) {
+            prefs.edit().remove("webdav_password").apply()
+            return true
+        }
+        val enc = runCatching { credentialCipher.encrypt(value, WEBDAV_PURPOSE) }.getOrNull()
+            ?: return false
+        prefs.edit().putString("webdav_password", enc).apply()
+        return true
+    }
+
+    /** WebDAV 是否已配置**且凭据可用**（地址、用户名、密码三者均非空） */
     val isWebDavConfigured: Boolean
-        get() = webDavUrl.isNotBlank() && webDavUser.isNotBlank()
+        get() = webDavUrl.isNotBlank() && webDavUser.isNotBlank() && webDavPassword.isNotEmpty()
 
     companion object {
         /** WebDAV 密码加密的 AAD purpose（绑定用途，防止密文挪作他用） */

@@ -107,8 +107,13 @@ class WebDavClient(
             .header("Authorization", authHeader)
             .method("MKCOL", null)
             .build()
-        runCatching {
-            client.newCall(request).execute().use { /* 405 已存在，忽略 */ }
+        // ★ 只把「已存在」（405，及部分服务器返回的 409）视为成功；
+        //   其余 HTTP 错误与传输异常一律抛出。此前用 runCatching 全吞，
+        //   会导致认证失败/网络故障被掩盖，调用方只看到后续重试的模糊结果。
+        client.newCall(request).execute().use { response ->
+            if (response.code != 405 && response.code != 409 && !response.isSuccessful) {
+                throw WebDavException("创建目录失败：HTTP ${response.code}")
+            }
         }
     }
 
