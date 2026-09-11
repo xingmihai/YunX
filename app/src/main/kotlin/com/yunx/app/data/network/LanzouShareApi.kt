@@ -220,31 +220,29 @@ class LanzouShareApi {
                 .add("ls", "1")
                 .add("pwd", data.pwd)
                 .build()
-            runCatching {
-                val raw = executeWithWafBypass(data.host, "获取文件列表失败") { ua ->
-                    Request.Builder()
-                        .url("https://${data.host}/filemoreajax.php?file=${data.folderFileId}")
-                        .header("User-Agent", ua)
-                        .header("X-Requested-With", LanzouShareConstants.AJAX_HEADER)
-                        .header("Referer", "https://${data.host}/${data.shareId}")
-                        .post(buildBody())
-                        .build()
-                }
-                // 重试耗尽后仍是挑战页：给出明确原因，而不是让 JSONObject 抛解析异常
-                if (LanzouShareConstants.ARG1_REGEX.containsMatchIn(raw)) {
-                    error("被安全验证拦截（已重试 ${LanzouShareConstants.WAF_MAX_RETRIES} 次），请稍后再试")
-                }
-                val json = JSONObject(raw)
-                val zt = json.optInt("zt", -1)
-                val info = json.optString("info").orEmpty()
-                val text = json.optJSONArray("text")
-                val items = (0 until (text?.length() ?: 0)).mapNotNull { i -> text?.optJSONObject(i) }
-                when (zt) {
-                    1 -> FolderListResult(ListStatus.OK, info, items)
-                    2 -> FolderListResult(ListStatus.EMPTY, "没有文件", emptyList())
-                    3 -> FolderListResult(ListStatus.BAD_PWD, info.ifBlank { "提取码错误" }, emptyList())
-                    else -> FolderListResult(ListStatus.OTHER, info.ifBlank { "获取失败（zt=$zt）" }, emptyList())
-                }
+            val raw = executeWithWafBypass(data.host, "获取文件列表失败") { ua ->
+                Request.Builder()
+                    .url("https://${data.host}/filemoreajax.php?file=${data.folderFileId}")
+                    .header("User-Agent", ua)
+                    .header("X-Requested-With", LanzouShareConstants.AJAX_HEADER)
+                    .header("Referer", "https://${data.host}/${data.shareId}")
+                    .post(buildBody())
+                    .build()
+            }
+            // 重试耗尽后仍是挑战页：给出明确原因，而不是让 JSONObject 抛解析异常
+            if (LanzouShareConstants.ARG1_REGEX.containsMatchIn(raw)) {
+                error("被安全验证拦截（已重试 ${LanzouShareConstants.WAF_MAX_RETRIES} 次），请稍后再试")
+            }
+            val json = JSONObject(raw)
+            val zt = json.optInt("zt", -1)
+            val info = json.optString("info").orEmpty()
+            val text = json.optJSONArray("text")
+            val items = (0 until (text?.length() ?: 0)).mapNotNull { i -> text?.optJSONObject(i) }
+            when (zt) {
+                1 -> FolderListResult(ListStatus.OK, info, items)
+                2 -> FolderListResult(ListStatus.EMPTY, "没有文件", emptyList())
+                3 -> FolderListResult(ListStatus.BAD_PWD, info.ifBlank { "提取码错误" }, emptyList())
+                else -> FolderListResult(ListStatus.OTHER, info.ifBlank { "获取失败（zt=$zt）" }, emptyList())
             }
         }
     }
@@ -273,31 +271,29 @@ class LanzouShareApi {
                 .add("p", pwd)
                 .add("kd", "1")
                 .build()
-            runCatching {
-                val raw = executeWithWafBypass(host, "获取直链失败") { ua ->
-                    Request.Builder()
-                        .url("https://$host/ajaxfile.php?file=$fileId")
-                        .header("User-Agent", ua)
-                        .header("X-Requested-With", LanzouShareConstants.AJAX_HEADER)
-                        .header("Referer", referer)
-                        .post(buildBody())
-                        .build()
-                }
-                if (LanzouShareConstants.ARG1_REGEX.containsMatchIn(raw)) {
-                    error("被安全验证拦截（已重试 ${LanzouShareConstants.WAF_MAX_RETRIES} 次），请稍后再试")
-                }
-                val json = JSONObject(raw)
-                if (json.optInt("zt", 0) != 1) {
-                    error(json.optString("inf").takeIf { it.isNotBlank() } ?: "获取直链失败")
-                }
-                val dom = json.optString("dom")
-                val url = json.optString("url")
-                if (dom.isBlank() || url.isBlank()) error("响应缺少直链字段")
-                DirectLink(
-                    url = dom + "/file/" + url + LanzouShareConstants.LANOSSO_SUFFIX,
-                    filename = json.optString("inf")
-                )
+            val raw = executeWithWafBypass(host, "获取直链失败") { ua ->
+                Request.Builder()
+                    .url("https://$host/ajaxfile.php?file=$fileId")
+                    .header("User-Agent", ua)
+                    .header("X-Requested-With", LanzouShareConstants.AJAX_HEADER)
+                    .header("Referer", referer)
+                    .post(buildBody())
+                    .build()
             }
+            if (LanzouShareConstants.ARG1_REGEX.containsMatchIn(raw)) {
+                error("被安全验证拦截（已重试 ${LanzouShareConstants.WAF_MAX_RETRIES} 次），请稍后再试")
+            }
+            val json = JSONObject(raw)
+            if (json.optInt("zt", 0) != 1) {
+                error(json.optString("inf").takeIf { it.isNotBlank() } ?: "获取直链失败")
+            }
+            val dom = json.optString("dom")
+            val url = json.optString("url")
+            if (dom.isBlank() || url.isBlank()) error("响应缺少直链字段")
+            DirectLink(
+                url = dom + "/file/" + url + LanzouShareConstants.LANOSSO_SUFFIX,
+                filename = json.optString("inf")
+            )
         }
     }
 }
