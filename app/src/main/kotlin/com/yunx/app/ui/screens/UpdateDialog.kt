@@ -18,14 +18,11 @@
 
 package com.yunx.app.ui.screens
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -52,19 +49,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.withStyle
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.yunx.app.data.update.UpdateChecker
+import com.yunx.app.ui.components.MarkdownText
 import java.util.Locale
 
 /**
@@ -185,7 +175,7 @@ fun UpdateDialog(
                             .padding(horizontal = 14.dp, vertical = 12.dp)
                     ) {
                         val body = release.body.trim().ifBlank { "暂无更新说明" }
-                        MarkdownBody(markdown = body)
+                        MarkdownText(markdown = body)
                     }
                 }
 
@@ -249,212 +239,6 @@ fun UpdateDialog(
                         Text("忽略本次", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------- Markdown 轻量渲染
-
-private enum class MdType { H1, H2, H3, BULLET, ORDERED, QUOTE, DIVIDER, TEXT }
-
-/** 有序列表：`1. xxx` / `2) xxx`；[number] 为序号，其余块为 null */
-private data class MdBlock(val type: MdType, val text: String, val number: Int? = null)
-
-/** 行内语法：**粗体** 与 `代码` */
-private val INLINE = Regex("""\*\*([^*]+)\*\*|`([^`]+)`""")
-
-/** 分隔线（---）：不渲染，仅用于切段 */
-private val HR = Regex("^-{3,}$")
-
-/** 有序列表项：`1. xxx` 或 `2) xxx` */
-private val ORDERED = Regex("""^(\d+)[.)]\s+(.*)$""")
-
-/** 可作为续行并入上一块的块类型：仅正文行（列表项之间互不合并，否则相邻条目会被吞成一条） */
-private val CONTINUABLE = setOf(MdType.BULLET, MdType.ORDERED, MdType.TEXT)
-
-private fun parseMarkdown(src: String): List<MdBlock> {
-    val out = ArrayList<MdBlock>()
-    val quote = StringBuilder()
-    // 上一段是否已结束（遇到空行）：软换行续行仅在未遇空行时合并
-    var pendingBlank = true
-    fun flushQuote() {
-        if (quote.isNotBlank()) {
-            out.add(MdBlock(MdType.QUOTE, quote.toString().trim()))
-            quote.clear()
-        }
-    }
-    /**
-     * 添加块。
-     *
-     * 续行合并规则（仅正文行可作为续行，列表项之间互不合并）：
-     * - 多行列表项的续行若被拆成独立 TEXT 块，渲染时既无项目符号也不随列表缩进，
-     *   看起来就是散落的纯文本 —— 用户观感即「没有渲染成 Markdown」；
-     * - 但列表项彼此不能合并，否则相邻条目会被吞成一条。
-     */
-    fun append(block: MdBlock) {
-        val last = out.lastOrNull()
-        val mergeable = !pendingBlank && block.type == MdType.TEXT &&
-            last != null && last.type in CONTINUABLE
-        if (mergeable) {
-            out[out.lastIndex] = last!!.copy(text = last.text + "\n" + block.text)
-        } else {
-            out.add(block)
-        }
-        pendingBlank = false
-    }
-    for (raw in src.lineSequence()) {
-        val t = raw.trim()
-        when {
-            t.isBlank() -> { flushQuote(); pendingBlank = true }
-            t.startsWith(">") -> { quote.appendLine(t.removePrefix(">").trim()); pendingBlank = false }
-            t.startsWith("### ") -> { flushQuote(); out.add(MdBlock(MdType.H3, t.removePrefix("### ").trim())); pendingBlank = false }
-            t.startsWith("## ") -> { flushQuote(); out.add(MdBlock(MdType.H2, t.removePrefix("## ").trim())); pendingBlank = false }
-            t.startsWith("# ") -> { flushQuote(); out.add(MdBlock(MdType.H1, t.removePrefix("# ").trim())); pendingBlank = false }
-            t.matches(HR) -> { flushQuote(); out.add(MdBlock(MdType.DIVIDER, "")); pendingBlank = true }
-            t.startsWith("- ") || t.startsWith("* ") -> {
-                flushQuote(); append(MdBlock(MdType.BULLET, t.drop(2).trim()))
-            }
-            // 有序列表：保留序号（有序语义本身有意义），按列表样式缩进渲染
-            else -> {
-                flushQuote()
-                val m = ORDERED.matchEntire(t)
-                if (m != null) {
-                    append(
-                        MdBlock(
-                            type = MdType.ORDERED,
-                            text = m.groupValues[2].trim(),
-                            number = m.groupValues[1].toIntOrNull()
-                        )
-                    )
-                } else {
-                    append(MdBlock(MdType.TEXT, t))
-                }
-            }
-        }
-    }
-    flushQuote()
-    return out
-}
-
-private fun renderInline(src: String): AnnotatedString = buildAnnotatedString {
-    var cursor = 0
-    for (m in INLINE.findAll(src)) {
-        append(src.substring(cursor, m.range.first))
-        val bold = m.groupValues[1]
-        val code = m.groupValues[2]
-        when {
-            bold.isNotEmpty() -> withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append(bold) }
-            code.isNotEmpty() -> withStyle(SpanStyle(fontFamily = FontFamily.Monospace)) { append(code) }
-        }
-        cursor = m.range.last + 1
-    }
-    append(src.substring(cursor))
-}
-
-@Composable
-private fun MdText(
-    text: String,
-    style: TextStyle,
-    color: Color,
-    modifier: Modifier = Modifier
-) {
-    val annotated = remember(text) { renderInline(text) }
-    Text(text = annotated, style = style, color = color, modifier = modifier)
-}
-
-@Composable
-private fun MarkdownBody(markdown: String, modifier: Modifier = Modifier) {
-    val blocks = remember(markdown) { parseMarkdown(markdown) }
-    val bodySmall = MaterialTheme.typography.bodySmall
-    Column(modifier = modifier) {
-        blocks.forEachIndexed { index, block ->
-            if (index > 0) {
-                val gap = when (block.type) {
-                    MdType.H1, MdType.H2, MdType.H3 -> 14.dp
-                    MdType.BULLET, MdType.ORDERED -> 3.dp
-                    MdType.DIVIDER -> 12.dp
-                    else -> 6.dp
-                }
-                Spacer(modifier = Modifier.height(gap))
-            }
-            when (block.type) {
-                MdType.H1 -> MdText(
-                    block.text,
-                    MaterialTheme.typography.titleMedium,
-                    MaterialTheme.colorScheme.onSurface
-                )
-                MdType.H2 -> MdText(
-                    block.text,
-                    MaterialTheme.typography.titleSmall,
-                    MaterialTheme.colorScheme.onSurface
-                )
-                MdType.H3 -> MdText(
-                    block.text,
-                    MaterialTheme.typography.labelLarge,
-                    MaterialTheme.colorScheme.primary
-                )
-                MdType.BULLET -> Row(modifier = Modifier.padding(start = 2.dp)) {
-                    Text(
-                        text = "•",
-                        style = bodySmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    MdText(
-                        text = block.text,
-                        style = bodySmall.copy(lineHeight = 19.sp),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                MdType.ORDERED -> Row(modifier = Modifier.padding(start = 2.dp)) {
-                    Text(
-                        text = "${block.number ?: 1}.",
-                        style = bodySmall,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    MdText(
-                        text = block.text,
-                        style = bodySmall.copy(lineHeight = 19.sp),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                MdType.DIVIDER -> Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(1.dp)
-                        .background(
-                            color = MaterialTheme.colorScheme.outlineVariant,
-                            shape = RoundedCornerShape(1.dp)
-                        )
-                )
-                MdType.QUOTE -> Row(modifier = Modifier.height(IntrinsicSize.Min)) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxHeight()
-                            .width(3.dp)
-                            .background(
-                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
-                                shape = RoundedCornerShape(2.dp)
-                            )
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    MdText(
-                        text = block.text,
-                        style = bodySmall.copy(lineHeight = 19.sp),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                MdType.TEXT -> MdText(
-                    block.text,
-                    bodySmall.copy(lineHeight = 19.sp),
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
         }
     }
