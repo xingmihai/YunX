@@ -20,35 +20,43 @@ package com.yunx.app.data.repository
 
 import com.yunx.app.data.db.LanzouAccountDao
 import com.yunx.app.data.db.LanzouAccountEntity
-import com.yunx.app.data.network.LanzouApi
 import com.yunx.app.data.network.LanzouConstants
 import kotlinx.coroutines.flow.Flow
+
+/** 保存结果：区分失败原因，避免出现「明明登录了却提示未登录」 */
+sealed interface LanzouSaveResult {
+    object Success : LanzouSaveResult
+    /** Cookie 为空：压根没取到（域名不对 / WebView 未同步） */
+    object NoCookie : LanzouSaveResult
+    /** 取到了 Cookie 但没有 ylogin：确实还没登录 */
+    object NotLoggedIn : LanzouSaveResult
+}
 
 /**
  * 蓝奏云账号仓库：凭证的校验与落库。
  *
- * 校验方式：用 [LanzouApi.fetchVei] 试取 vei —— 能取到说明登录态有效
- * （未登录时 mydisk.php 会返回登录页，提取不到 vei）。
- * 比起额外找一个「用户信息」接口，这样复用已有调用，少一次请求。
+ * ★ 为什么**不做网络校验**：
+ *   之前在 save 里调 [LanzouApi.fetchVei] 做在线校验，失败就返回 false。
+ *   但蓝奏云前面挂了 WAF（acw_tc / cdn_sec_tc / acw_sc__v2 是 JS 挑战凭证），
+ *   OkHttp 直接请求很可能被拦 —— 于是**即使 Cookie 完全正确也会保存失败**，
+ *   并弹出误导性的「未检测到有效登录状态」。
+ *
+ *   改为只用本地判据：Cookie 里有 ylogin 就视为已登录。
+ *   真正的接口连通性放到浏览时验证（那里失败会提示「登录状态已失效」）。
  */
 class LanzouAccountRepository(private val dao: LanzouAccountDao) {
-
-    private val api = LanzouApi()
 
     fun observeAccount(): Flow<LanzouAccountEntity?> = dao.observeAccount()
 
     suspend fun getAccount(): LanzouAccountEntity? = dao.getAccount()
 
-    /**
-     * 校验并保存 Cookie。
-     * @return 是否成功。失败（未登录 / 凭证过期 / 网络异常）返回 false 且不落库。
-     */
-    suspend fun save(cookie: String): Boolean {
+    /** 保存 Cookie。成功即说明检测到登录态。 */
+    suspend fun save(cookie: String): LanzouSaveResult {
+        if (cookie.isBlank()) return LanzouSaveResult.NoCookie
         val uid = LanzouConstants.extractUid(cookie)
-        if (uid.isEmpty()) return false
-        if (api.fetchVei(cookie, uid).isFailure) return false
+        if (uid.isEmpty()) return LanzouSaveResult.NotLoggedIn
         dao.upsert(LanzouAccountEntity(cookie = cookie, uid = uid))
-        return true
+        return LanzouSaveResult.Success
     }
 
     suspend fun clear() = dao.clear()

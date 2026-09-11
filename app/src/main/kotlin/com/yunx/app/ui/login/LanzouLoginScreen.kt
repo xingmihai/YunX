@@ -43,6 +43,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import com.yunx.app.data.network.LanzouConstants
+import com.yunx.app.data.repository.LanzouSaveResult
 import com.yunx.app.ui.SnackbarController
 import com.yunx.app.ui.rememberGlobalSnackbarHostState
 import kotlinx.coroutines.launch
@@ -61,21 +62,34 @@ import kotlinx.coroutines.launch
 fun LanzouLoginScreen(
     onBack: () -> Unit,
     onSaved: () -> Unit,
-    /** 网络校验 + 落库，成功返回 true（由调用方注入 repository） */
-    validateAndSave: suspend (String) -> Boolean
+    /** 落库并返回结果（由调用方注入 repository） */
+    validateAndSave: suspend (String) -> LanzouSaveResult
 ) {
     val scope = rememberCoroutineScope()
     val snackbarHostState = rememberGlobalSnackbarHostState()
     var isSaving by remember { mutableStateOf(false) }
 
+    /**
+     * 读取 Cookie。
+     *
+     * ★ 必须 [CookieManager.flush]：WebView 的 cookie 写入是异步的，
+     *   不 flush 就立刻 getCookie 可能读到空 —— 表现为「刚登录完却检测不到」。
+     */
+    fun readCookie(): String {
+        val cm = CookieManager.getInstance()
+        runCatching { cm.flush() }
+        return LanzouConstants.extractCookie { cm.getCookie(it) }
+    }
+
     rememberWebLoginAutoDetect(
-        sampleCredential = { LanzouConstants.extractCookie { CookieManager.getInstance().getCookie(it) } },
+        sampleCredential = { readCookie() },
         isPlausible = { LanzouConstants.isPlausibleCookie(it) },
-        validateAndSave = validateAndSave,
+        validateAndSave = { validateAndSave(it) is LanzouSaveResult.Success },
         isPaused = { isSaving },
         onInFlightChange = { isSaving = it },
         onAutoSaved = onSaved
     )
+
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -92,15 +106,23 @@ fun LanzouLoginScreen(
                         onClick = {
                             scope.launch {
                                 isSaving = true
-                                val cookie = LanzouConstants.extractCookie {
-                                    CookieManager.getInstance().getCookie(it)
-                                }
-                                val ok = cookie.isNotBlank() && validateAndSave(cookie)
+                                val cookie = readCookie()
+                                val result = validateAndSave(cookie)
                                 isSaving = false
-                                SnackbarController.show(
-                                    if (ok) "登录成功" else "未检测到有效登录状态，请先在页面内完成登录"
-                                )
-                                if (ok) onSaved()
+                                when (result) {
+                                    LanzouSaveResult.Success -> {
+                                        SnackbarController.show("登录成功")
+                                        onSaved()
+                                    }
+                                    LanzouSaveResult.NoCookie ->
+                                        SnackbarController.show(
+                                            "未读取到 Cookie（${LanzouConstants.cookieNames(cookie)}）"
+                                        )
+                                    LanzouSaveResult.NotLoggedIn ->
+                                        SnackbarController.show(
+                                            "Cookie 中没有登录信息，请先完成登录（${LanzouConstants.cookieNames(cookie)}）"
+                                        )
+                                }
                             }
                         },
                         enabled = !isSaving

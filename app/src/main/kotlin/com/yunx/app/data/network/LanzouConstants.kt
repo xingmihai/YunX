@@ -36,8 +36,22 @@ object LanzouConstants {
     /** 用户后台域名（登录、文件管理；与分享页 lanzou*.com 不同） */
     const val BASE = "https://pc.woozooo.com"
 
-    /** 登录态 Cookie 所在域名（CookieManager 取值用） */
-    const val COOKIE_DOMAIN = "pc.woozooo.com"
+    /**
+     * Cookie 候选来源（CookieManager 取值用）。
+     *
+     * ★ 必须是**完整 URL**（带 scheme），不能是裸域名：
+     *   `CookieManager.getCookie()` 的参数是 URL，传 "pc.woozooo.com" 会返回 null
+     *   —— 对照 C139Constants 的写法（`https://mail.10086.cn`）即可确认。
+     *
+     * ★ 为什么列多个：蓝奏云的后台与登录页可能落在不同域/子域，
+     *   只查一个域会漏。多域扫描后按 cookie 名合并去重。
+     */
+    val COOKIE_URLS = listOf(
+        "$BASE",
+        "https://.pc.woozooo.com",
+        "https://.woozooo.com",
+        "https://woozooo.com"
+    )
 
     /** 用户后台主页：登录入口，同时也是 vei 的来源页面 */
     fun mydiskUrl(uid: String): String = "$BASE/mydisk.php?item=files&action=index&u=$uid"
@@ -75,17 +89,43 @@ object LanzouConstants {
         Regex("ylogin=(\\d+)").find(cookie)?.groupValues?.get(1).orEmpty()
 
     /**
-     * 从 CookieManager 读取整个域的 Cookie 串.
-     * ★ 取整个域而非挑字段：WAF 挑战凭证（acw_tc 等）也在其中，丢了会偶发 403。
+     * 从 CookieManager 读取 Cookie 串（多域扫描后按名合并去重）。
+     *
+     * ★ 取**全部** cookie 而非挑字段：WAF 挑战凭证（acw_tc / cdn_sec_tc /
+     *   acw_sc__v2）也在其中，丢了会让后续接口偶发 403。
+     *   （其他网盘平台用 KEEP_KEYS 白名单挑关键字段，蓝奏云不能这么做。）
      */
-    fun extractCookie(get: (String) -> String?): String = get(COOKIE_DOMAIN).orEmpty()
+    fun extractCookie(get: (String) -> String?): String {
+        val out = linkedMapOf<String, String>()
+        for (url in COOKIE_URLS) {
+            val raw = get(url) ?: continue
+            for (kv in raw.split(";")) {
+                val part = kv.trim()
+                val eq = part.indexOf('=')
+                if (eq <= 0) continue
+                val name = part.substring(0, eq)
+                // 先出现的优先（更具体的域在前）
+                if (name !in out) out[name] = part
+            }
+        }
+        return out.values.joinToString("; ")
+    }
 
     /**
-     * 廉价预检：凭证关键字段是否齐全（不发网络请求）。
-     * 用于挡掉登录前的中间态 Cookie。
+     * 廉价预检：是否已登录（不发网络请求）。
+     *
+     * ★ 只要求 `ylogin`（用户 id）：这是判断登录态的必要条件，也是 [extractUid]
+     *   的唯一来源。此前还要求 `phpdisk_info`，但该字段并非所有登录态都有，
+     *   多一个条件就多一种「明明登录了却检测不到」的可能。
      */
-    fun isPlausibleCookie(cookie: String): Boolean =
-        cookie.contains("ylogin=") && cookie.contains("phpdisk_info=")
+    fun isPlausibleCookie(cookie: String): Boolean = cookie.contains("ylogin=")
+
+    /** 诊断用：列出 cookie 的名称（**不含值**，可安全展示/上报） */
+    fun cookieNames(cookie: String): String =
+        cookie.split(";").mapNotNull { part ->
+            val eq = part.trim().indexOf('=')
+            if (eq > 0) part.trim().substring(0, eq) else null
+        }.joinToString(", ").ifEmpty { "（无）" }
 
     const val USER_AGENT =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
