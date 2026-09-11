@@ -49,7 +49,11 @@ object LanzouShareConstants {
      *   但抓包未覆盖到**实际下载请求**，无法确认带上是否会被拒。
      *   故默认留空（多数第三方实现亦不加），若下载失败改此常量即可。
      */
-    const val LANOSSO_SUFFIX = ""
+    // ★ 已删除 LANOSSO_SUFFIX（原为猜测，抓包证伪）：
+    //   曾猜测直链需拼接 lanosso 后缀，但抓包显示 **lanosso 是 302 跳转的目标 CDN 域名**
+    //   （u5189768.dmpdmp.com/file/?... → 302 → h1052.lanosso.com/xxx.apk），
+    //   由服务器在 Location 里下发，不是客户端可拼接的 URL 参数。
+    //   保留该常量只会拼出错误 URL，故删除。
 
     // ---------- 分享页（如 /ilXoR3yvb92b）----------
 

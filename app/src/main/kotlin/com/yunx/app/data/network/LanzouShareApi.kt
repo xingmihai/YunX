@@ -241,7 +241,7 @@ class LanzouShareApi {
                 val url = json.optString("url")
                 if (dom.isBlank() || url.isBlank()) error("响应缺少直链字段")
                 DirectLink(
-                    url = dom + "/file/" + url + LanzouShareConstants.LANOSSO_SUFFIX,
+                    url = dom + "/file/" + url,
                     filename = json.optString("inf")
                 )
             }
