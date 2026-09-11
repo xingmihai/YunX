@@ -20,6 +20,8 @@
 //   Kotlin DSL 脚本作用域里 `java` 会被解析为 Java 插件扩展访问器（而非根包），
 //   导致 `java.time` 报 Unresolved reference 'time'（Gradle 9 + Kotlin 2.2 必现）。
 //   import 按类路径全限定名解析、不受脚本作用域影响，因此改用短名引用。
+//   本脚本内**任何** java.* 引用都必须先 import 再用短名（含 Instant）。
+import java.time.Instant
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
@@ -56,7 +58,7 @@ plugins {
 val buildTime: ZonedDateTime = run {
     val raw = (project.findProperty("buildTime") as String?) ?: System.getenv("YUNX_BUILD_TIME")
     val epoch = raw?.toLongOrNull()
-    epoch?.let { java.time.Instant.ofEpochMilli(it).atZone(ZoneId.of("Asia/Shanghai")) }
+    epoch?.let { Instant.ofEpochMilli(it).atZone(ZoneId.of("Asia/Shanghai")) }
         ?: ZonedDateTime.now(ZoneId.of("Asia/Shanghai"))
 }
 val versionCodeInt: Int = buildTime.format(DateTimeFormatter.ofPattern("yyyyMMddHH")).toInt()
