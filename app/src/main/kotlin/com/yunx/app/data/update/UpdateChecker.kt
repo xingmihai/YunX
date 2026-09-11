@@ -79,7 +79,9 @@ object UpdateChecker {
 
     data class Asset(
         val name: String,
-        val downloadUrl: String
+        val downloadUrl: String,
+        /** 附件体积（字节）；网页兜底通道拿不到时为 null */
+        val sizeBytes: Long? = null
     )
 
     data class Release(
@@ -202,7 +204,13 @@ object UpdateChecker {
             obj.optJSONArray("assets")?.let { arr ->
                 for (i in 0 until arr.length()) {
                     val a = arr.optJSONObject(i) ?: continue
-                    add(Asset(a.optString("name"), a.optString("browser_download_url")))
+                    add(
+                        Asset(
+                            name = a.optString("name"),
+                            downloadUrl = a.optString("browser_download_url"),
+                            sizeBytes = a.optLong("size", -1L).takeIf { it > 0 }
+                        )
+                    )
                 }
             }
         }
