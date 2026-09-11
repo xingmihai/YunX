@@ -30,7 +30,6 @@ object DownloadPlatform {
     const val C139 = "c139"
     const val PAN123 = "pan123"
     const val LANZOU = "lanzou"
-    const val LANZOU = "lanzou"
     /** 通用/未知来源（手动添加、应用更新下载等） */
     const val GENERIC = "generic"
 }

@@ -477,6 +477,7 @@ private fun platformLabel(platform: SharePlatform): String = when (platform) {
     SharePlatform.BAIDU -> "百度网盘"
     SharePlatform.C139 -> "139 网盘"
     SharePlatform.PAN123 -> "123云盘"
+    SharePlatform.LANZOU -> "蓝奏云"
 }
 
 /** 剪贴板分享链接提示卡片：检测到分享链接时，询问是否粘贴解析 */

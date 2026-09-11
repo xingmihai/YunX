@@ -247,6 +247,12 @@ class ResolveViewModel(
                                 saveMessage = it.message ?: "转存失败"
                             }
                     }
+                    SharePlatform.LANZOU -> {
+                        // 蓝奏云不支持转存（走 api.ilanzou.com 且需登录态，未抓包验证），
+                        // 直接给出明确提示，而不是走夸克兜底分支去做无效请求。
+                        saveMessage = "蓝奏云暂不支持转存，请直接下载"
+                        saveTarget = null
+                    }
                     else -> {
                         val credential = currentCredential()
                         if (credential.isNullOrBlank()) {
@@ -570,13 +576,16 @@ class ResolveViewModel(
                 return@launch
             }
             val repo = currentRepo()
-            repo.createSession(link, pwd, credential)
+            // ★ 免登录平台（蓝奏云）currentCredential() 返回占位，但类型仍是 String?，
+            //   这里收敛成非空：已过 requiresLogin() 检查，走到此处的凭证一定可用。
+            val effectiveCredential = credential ?: LANZOU_NO_CREDENTIAL
+            repo.createSession(link, pwd, effectiveCredential)
                 .onSuccess { s ->
                     session = s
                     currentDirFid = currentDefaultDirFid()
                     dirStack.clear()
                     pathNames = emptyList()
-                    loadFiles(s, currentDirFid, credential, repo)
+                    loadFiles(s, currentDirFid, effectiveCredential, repo)
                 }
                 .onFailure { e ->
                     uiState = ResolveUiState.Error(e.message ?: "解析失败")
