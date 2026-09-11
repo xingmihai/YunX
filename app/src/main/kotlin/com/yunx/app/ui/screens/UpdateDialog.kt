@@ -270,33 +270,57 @@ private val HR = Regex("^-{3,}$")
 /** 有序列表项：`1. xxx` 或 `2) xxx` */
 private val ORDERED = Regex("""^(\d+)[.)]\s+(.*)$""")
 
+/** 可作为续行并入上一块的块类型：仅正文行（列表项之间互不合并，否则相邻条目会被吞成一条） */
+private val CONTINUABLE = setOf(MdType.BULLET, MdType.ORDERED, MdType.TEXT)
+
 private fun parseMarkdown(src: String): List<MdBlock> {
     val out = ArrayList<MdBlock>()
     val quote = StringBuilder()
+    // 上一段是否已结束（遇到空行）：软换行续行仅在未遇空行时合并
+    var pendingBlank = true
     fun flushQuote() {
         if (quote.isNotBlank()) {
             out.add(MdBlock(MdType.QUOTE, quote.toString().trim()))
             quote.clear()
         }
     }
+    /**
+     * 添加块。
+     *
+     * 续行合并规则（仅正文行可作为续行，列表项之间互不合并）：
+     * - 多行列表项的续行若被拆成独立 TEXT 块，渲染时既无项目符号也不随列表缩进，
+     *   看起来就是散落的纯文本 —— 用户观感即「没有渲染成 Markdown」；
+     * - 但列表项彼此不能合并，否则相邻条目会被吞成一条。
+     */
+    fun append(block: MdBlock) {
+        val last = out.lastOrNull()
+        val mergeable = !pendingBlank && block.type == MdType.TEXT &&
+            last != null && last.type in CONTINUABLE
+        if (mergeable) {
+            out[out.lastIndex] = last!!.copy(text = last.text + "\n" + block.text)
+        } else {
+            out.add(block)
+        }
+        pendingBlank = false
+    }
     for (raw in src.lineSequence()) {
         val t = raw.trim()
         when {
-            t.isBlank() -> flushQuote()
-            t.startsWith(">") -> quote.appendLine(t.removePrefix(">").trim())
-            t.startsWith("### ") -> { flushQuote(); out.add(MdBlock(MdType.H3, t.removePrefix("### ").trim())) }
-            t.startsWith("## ") -> { flushQuote(); out.add(MdBlock(MdType.H2, t.removePrefix("## ").trim())) }
-            t.startsWith("# ") -> { flushQuote(); out.add(MdBlock(MdType.H1, t.removePrefix("# ").trim())) }
-            t.matches(HR) -> { flushQuote(); out.add(MdBlock(MdType.DIVIDER, "")) }
+            t.isBlank() -> { flushQuote(); pendingBlank = true }
+            t.startsWith(">") -> { quote.appendLine(t.removePrefix(">").trim()); pendingBlank = false }
+            t.startsWith("### ") -> { flushQuote(); out.add(MdBlock(MdType.H3, t.removePrefix("### ").trim())); pendingBlank = false }
+            t.startsWith("## ") -> { flushQuote(); out.add(MdBlock(MdType.H2, t.removePrefix("## ").trim())); pendingBlank = false }
+            t.startsWith("# ") -> { flushQuote(); out.add(MdBlock(MdType.H1, t.removePrefix("# ").trim())); pendingBlank = false }
+            t.matches(HR) -> { flushQuote(); out.add(MdBlock(MdType.DIVIDER, "")); pendingBlank = true }
             t.startsWith("- ") || t.startsWith("* ") -> {
-                flushQuote(); out.add(MdBlock(MdType.BULLET, t.drop(2).trim()))
+                flushQuote(); append(MdBlock(MdType.BULLET, t.drop(2).trim()))
             }
             // 有序列表：保留序号（有序语义本身有意义），按列表样式缩进渲染
             else -> {
+                flushQuote()
                 val m = ORDERED.matchEntire(t)
                 if (m != null) {
-                    flushQuote()
-                    out.add(
+                    append(
                         MdBlock(
                             type = MdType.ORDERED,
                             text = m.groupValues[2].trim(),
@@ -304,7 +328,7 @@ private fun parseMarkdown(src: String): List<MdBlock> {
                         )
                     )
                 } else {
-                    flushQuote(); out.add(MdBlock(MdType.TEXT, t))
+                    append(MdBlock(MdType.TEXT, t))
                 }
             }
         }
