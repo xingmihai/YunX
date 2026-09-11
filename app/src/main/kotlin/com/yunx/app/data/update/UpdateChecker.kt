@@ -91,8 +91,8 @@ object UpdateChecker {
 
     /** 比较两个版本号：v1 > v2 返回正数，v1 < v2 返回负数，相等返回 0 */
     fun compareVersions(v1: String, v2: String): Int {
-        val parts1 = v1.trimStart('v').split(".")
-        val parts2 = v2.trimStart('v').split(".")
+        val parts1 = normalizeVersion(v1).split(".")
+        val parts2 = normalizeVersion(v2).split(".")
         val maxLength = maxOf(parts1.size, parts2.size)
         for (i in 0 until maxLength) {
             val num1 = parts1.getOrNull(i)?.toIntOrNull() ?: 0
@@ -200,9 +200,14 @@ object UpdateChecker {
      */
     private suspend fun fetchViaWeb(): Release? = runCatching {
         val atom = httpGet(RELEASES_ATOM_URL) ?: return@runCatching null
-        val entry = atom.substringAfter("<entry>", "").ifBlank { return@runCatching null }
-        val tag = entry.substringAfter("<title>", "").substringBefore("</title>").trim()
-        if (tag.isBlank()) return@runCatching null
+        // 只取第一个 entry（Atom 按发布时间倒序，首个即最新 Release）；
+        // 多个 entry 时必须截断，否则后续标签解析会跨 entry 取到错误内容
+        val entry = atom.substringAfter("<entry>", "")
+            .substringBefore("</entry>", "")
+            .ifBlank { return@runCatching null }
+        // ★ <title> 是 Release **名称**（如 "YunX v1.3.0"），不是 tag，绝不能当 tag 用：
+        //   拿它拼 expanded_assets 会 404，且 compareVersions 会解析出 0 → 误判"无新版本"。
+        val tag = extractTag(entry) ?: return@runCatching null
         val updated = entry.substringAfter("<updated>", "").substringBefore("</updated>").trim()
         val content = entry.substringAfter("<content", "")
             .substringAfter(">", "")
@@ -215,12 +220,55 @@ object UpdateChecker {
         )
     }.getOrNull()
 
+    /**
+     * 从 Atom entry 提取真正的 git tag，按可靠性降序取第一个非空结果：
+     * 1. `<link rel="alternate" href=".../releases/tag/<tag>>"` —— 权威来源
+     * 2. `<id>tag:github.com,2008:Repository/<id>/<tag></id>` —— 末段即 tag
+     * 3. 从 `<title>` 里正则抽取形如 `v1.3.0` 的版本号 —— Release 名称带前缀时的兜底
+     */
+    private fun extractTag(entry: String): String? {
+        val fromLink = entry.substringAfter("""href="https://github.com/$OWNER/$REPO/releases/tag/""", "")
+            .substringBefore("\"", "")
+            .trim()
+        if (fromLink.isNotBlank()) return fromLink
+
+        val fromId = entry.substringAfter("<id>", "")
+            .substringBefore("</id>", "")
+            .substringAfterLast('/', "")
+            .trim()
+        if (fromId.isNotBlank()) return fromId
+
+        val title = entry.substringAfter("<title>", "").substringBefore("</title>").trim()
+        return VERSION_IN_TEXT.find(title)?.value
+    }
+
+    /** 文本中的版本号（带 v 前缀），用于从 Release 名称中兜底提取 */
+    private val VERSION_IN_TEXT = Regex("""v\d+(?:\.\d+)*""")
+
+    /**
+     * 归一化版本号：剥离 v 前缀、Release 名称前缀与后缀说明。
+     * 例如 "YunX v1.3.0" / "v1.3.0（预览）" → "1.3.0"，
+     * 避免非数字前缀导致 toIntOrNull() 变 0、把新版本误判为旧版本。
+     */
+    fun normalizeVersion(raw: String): String {
+        val s = raw.trim()
+        VERSION_IN_TEXT.find(s)?.value?.let { return it.trimStart('v') }
+        return s.trimStart('v', 'V').takeWhile { it.isDigit() || it == '.' }.trim('.')
+    }
+
     /** 从网页片段解析 APK 直链：/xingmihai/YunX/releases/download/<tag>/<file>.apk */
     private suspend fun fetchAssetsFromWeb(tag: String): List<Asset> = runCatching {
         val html = httpGet(expandedAssetsUrl(tag)) ?: return@runCatching emptyList()
+        // 主匹配：完整 download 路径（带引号的 href）
         val regex = Regex("href=\"/$OWNER/$REPO/releases/download/[^\"]+\\.apk\"")
-        regex.findAll(html).map { m ->
+        val found = regex.findAll(html).mapNotNull { m ->
             val path = m.value.substringAfter("href=\"").substringBefore("\"")
+            if (path.isBlank()) null else Asset(path.substringAfterLast('/'), "https://github.com$path")
+        }.toList()
+        if (found.isNotEmpty()) return@runCatching found
+        // 兜底：属性顺序/引号风格变化时，直接匹配 download 路径本身
+        Regex("/$OWNER/$REPO/releases/download/[^\"'\\s]+\\.apk").findAll(html).map { m ->
+            val path = m.value
             Asset(path.substringAfterLast('/'), "https://github.com$path")
         }.toList()
     }.getOrDefault(emptyList())
