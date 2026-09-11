@@ -21,6 +21,7 @@ package com.yunx.app.data.repository
 import com.yunx.app.data.db.LanzouAccountDao
 import com.yunx.app.data.db.LanzouAccountEntity
 import com.yunx.app.data.network.LanzouApi
+import com.yunx.app.data.network.LanzouConstants
 import kotlinx.coroutines.flow.Flow
 
 /**
