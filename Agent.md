@@ -384,7 +384,13 @@ CI 读取版本号用 `./gradlew -q printVersion`（源码无字面量，grep �
   形成「打 tag → 构建 → 再打 tag」的无限循环；
 - 同一小时内重复构建时 tag 已存在 → 跳过打 tag 并告警，Release 复用同名 tag
   （此时版本相同，用户本就不需要更新，语义正确）；
-- 手工发版走 `workflow_dispatch`（`publish_release` 默认 true），不要手推 tag。
+- 手工发版走 `workflow_dispatch`（`publish_release` 默认 true），不要手推 tag；
+- **构建时间只算一次**：workflow 先算 `epoch`，再用 `-PbuildTime=<epochMillis>`
+  传给 `printVersion` 与 `assemble*`。`app/build.gradle.kts` 支持该参数
+  （其次读环境变量 `YUNX_BUILD_TIME`，都没有才 `now()`）。
+  不传的话两次 Gradle 调用各自 `now()`，跨整点仍会算出不同 versionCode；
+- tag 推送报 `already exists` 时按**重复构建**处理（复用 tag）而非失败，
+  避免同小时并发构建把 CI 跑红。
 
 ## 11. 更新检测只走 edge 镜像的网页端点，不用 REST API
 

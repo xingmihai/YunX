@@ -44,7 +44,21 @@ plugins {
  *
  * 时区固定 UTC+8（Asia/Shanghai），保证本地与 CI 构建结果一致。
  */
-val buildTime: ZonedDateTime = ZonedDateTime.now(ZoneId.of("Asia/Shanghai"))
+/**
+ * 构建时间来源（按优先级）：
+ * 1. `-PbuildTime=<epochMillis>` —— CI 传入。**必须这么做**：一次发版里
+ *    `printVersion` 与 `assembleRelease` 是两次独立 Gradle 调用，各自调
+ *    `ZonedDateTime.now()` 会在跨整点时算出不同 versionCode，
+ *    导致 tag 与 APK 内嵌版本不一致。CI 固定传同一个时间戳即可保证同源。
+ * 2. 环境变量 `YUNX_BUILD_TIME`
+ * 3. 兜底 `now()`（本地构建）
+ */
+val buildTime: ZonedDateTime = run {
+    val raw = (project.findProperty("buildTime") as String?) ?: System.getenv("YUNX_BUILD_TIME")
+    val epoch = raw?.toLongOrNull()
+    epoch?.let { java.time.Instant.ofEpochMilli(it).atZone(ZoneId.of("Asia/Shanghai")) }
+        ?: ZonedDateTime.now(ZoneId.of("Asia/Shanghai"))
+}
 val versionCodeInt: Int = buildTime.format(DateTimeFormatter.ofPattern("yyyyMMddHH")).toInt()
 val versionNameStr: String = buildTime.format(DateTimeFormatter.ofPattern("yyyy.MM.dd"))
 
