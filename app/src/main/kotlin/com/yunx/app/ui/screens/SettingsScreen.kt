@@ -101,7 +101,6 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.yunx.app.data.backup.AuthBackupManager
 import com.yunx.app.data.backup.AuthCrypto
-import com.yunx.app.data.download.DownloadPlatform
 import com.yunx.app.data.download.DownloadSaver
 import com.yunx.app.data.prefs.SettingsRepository
 import com.yunx.app.data.update.UpdateChecker
@@ -111,20 +110,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** 可选的下载线程数档位（最高 512） */
-private val threadOptions = listOf(1, 2, 4, 8, 16, 32, 64, 128, 256, 512)
-
-/** 按平台下载线程数设置项 */
-private data class ThreadPlatform(val platform: String, val label: String)
-
-private val threadPlatforms = listOf(
-    ThreadPlatform(DownloadPlatform.QUARK, "夸克网盘"),
-    ThreadPlatform(DownloadPlatform.UC, "UC 网盘"),
-    ThreadPlatform(DownloadPlatform.XUNLEI, "迅雷网盘"),
-    ThreadPlatform(DownloadPlatform.BAIDU, "百度网盘"),
-    ThreadPlatform(DownloadPlatform.C139, "139 网盘"),
-    ThreadPlatform(DownloadPlatform.PAN123, "123 云盘"),
-)
 
 /** 跳转系统「应用通知」设置页（Android 8+ 通用入口；失败时退回应用详情页） */
 private fun openNotificationSettings(context: Context) {
@@ -144,7 +129,8 @@ private fun openNotificationSettings(context: Context) {
 }
 
 /**
- * 设置页：下载线程数设置 + 主题外观 + 检查更新 + 日志与网盘认证。
+ * 设置页：下载保存目录 / 并发任务数 / 限速等下载策略 + 主题外观 + 检查更新 + 日志与网盘认证。
+ * 线程数不在设置页配置：每次下载时在「下载直链」弹窗中选定并锁定到任务。
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -158,7 +144,6 @@ fun SettingsScreen(
     onDownloadUpdateApk: (url: String, fileName: String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var showThreadsDialog by remember { mutableStateOf(false) }
     var showLogDialog by remember { mutableStateOf(false) }
     // 检查更新结果（非空时弹更新对话框）
     var updateRelease by remember { mutableStateOf<UpdateChecker.Release?>(null) }
@@ -170,9 +155,6 @@ fun SettingsScreen(
     // 导出/导入处理中（PBKDF2 21万次迭代派生密钥，偶发 1~3s，期间显示加载弹窗）
     var isExporting by remember { mutableStateOf(false) }
     var isImporting by remember { mutableStateOf(false) }
-    // 按平台线程数：二级弹窗当前选择的平台
-    var selectedThreadPlatform by remember { mutableStateOf(threadPlatforms.first()) }
-    var showPlatformThreadDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     // 下载保存目录（SAF）：本地状态驱动 UI 刷新，同时同步 SharedPreferences
@@ -272,14 +254,6 @@ fun SettingsScreen(
             .padding(16.dp)
     ) {
         SectionLabel("下载")
-        SettingsItem(
-            icon = Icons.Outlined.Tune,
-            title = "下载线程数",
-            description = "按网盘分别设置分片并发数（默认 32，最高 512）",
-            onClick = { showThreadsDialog = true }
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
 
         // 下载保存目录：系统文件夹选择器（SAF，适配各 Android 版本分区存储）；
         // 已自定义时卡片右侧内嵌「恢复默认」操作（不单独外露按钮）
@@ -600,109 +574,6 @@ fun SettingsScreen(
         )
     }
 
-    // 线程数选择弹窗（按平台）
-    if (showThreadsDialog) {
-        AlertDialog(
-            onDismissRequest = { showThreadsDialog = false },
-            title = { Text("下载线程数") },
-            text = {
-                // 横屏/小屏时内容超高可滚动，避免按钮被挤出屏幕
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 420.dp)
-                        .verticalScroll(rememberScrollState())
-                ) {
-                    Text(
-                        text = "按网盘分别设置分片并发数；线程数不是越多越好，适当调整",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    threadPlatforms.forEach { item ->
-                        val current = settingsRepo.downloadThreadsFor(item.platform)
-                        val isXunlei = item.platform == DownloadPlatform.XUNLEI
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable(enabled = !isXunlei) {
-                                    selectedThreadPlatform = item
-                                    showPlatformThreadDialog = true
-                                }
-                                .padding(vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = item.label,
-                                style = MaterialTheme.typography.bodyLarge,
-                                modifier = Modifier.weight(1f)
-                            )
-                            Text(
-                                text = if (isXunlei) "固定 8 线程" else "$current 线程",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = if (isXunlei) {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                } else {
-                                    MaterialTheme.colorScheme.primary
-                                }
-                            )
-                            if (!isXunlei) {
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Icon(
-                                    Icons.Outlined.ChevronRight,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showThreadsDialog = false }) { Text("取消") }
-            }
-        )
-    }
-
-    // 单个平台线程数选择（二级弹窗）
-    if (showPlatformThreadDialog) {
-        val current = settingsRepo.downloadThreadsFor(selectedThreadPlatform.platform)
-        AlertDialog(
-            onDismissRequest = { showPlatformThreadDialog = false },
-            title = { Text("${selectedThreadPlatform.label}线程数") },
-            text = {
-                Column(
-                    modifier = Modifier
-                        .heightIn(max = 320.dp)
-                        .verticalScroll(rememberScrollState())
-                ) {
-                    threadOptions.chunked(2).forEach { rowValues ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            rowValues.forEach { value ->
-                                RadioThreadRow(
-                                    value = value,
-                                    threads = current,
-                                    onSelect = { v ->
-                                        settingsRepo.setDownloadThreads(selectedThreadPlatform.platform, v)
-                                        showPlatformThreadDialog = false
-                                    },
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
-                            // 奇数个时补空占位，保持两列对齐
-                            if (rowValues.size == 1) Spacer(modifier = Modifier.weight(1f))
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showPlatformThreadDialog = false }) { Text("取消") }
-            }
-        )
-    }
 
     // 导出网盘认证弹窗（AES 加密密码 + 导出范围）
     if (showExportAuthDialog) {
@@ -1199,31 +1070,6 @@ private fun SettingsItem(
     }
 }
 
-/** 线程数单选行（用于弹窗两列布局，每行占半宽） */
-@Composable
-private fun RadioThreadRow(
-    value: Int,
-    threads: Int,
-    onSelect: (Int) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(vertical = 2.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        RadioButton(
-            selected = threads == value,
-            onClick = { onSelect(value) }
-        )
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(
-            text = "$value 线程",
-            style = MaterialTheme.typography.bodyLarge
-        )
-    }
-}
 
 /** 速度限制展示文案：0=不限速；>=1MB/s 显示 MB/s，否则 KB/s */
 private fun speedLimitText(bps: Long): String {

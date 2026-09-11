@@ -113,6 +113,9 @@ fun ResolveScreen(
     ucCloudViewModel: UCCoudViewModel,
     /** 123 云盘浏览 ViewModel（123 分享转存目录选择用） */
     pan123CloudViewModel: Pan123CloudViewModel,
+    /** 下载线程数预选值（上次选择，随下载确认回写记忆） */
+    initialThreads: Int = 32,
+    onThreadsSelected: (Int) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val state = viewModel.uiState
@@ -316,7 +319,11 @@ fun ResolveScreen(
     downloadLink?.let { link ->
         DownloadLinkDialog(
             link = link,
-            onDownload = { viewModel.startDownload(link) },
+            initialThreads = initialThreads,
+            onDownload = { threads ->
+                onThreadsSelected(threads)
+                viewModel.startDownload(link, threads)
+            },
             onDismiss = { viewModel.dismissDownloadDialog() }
         )
     }

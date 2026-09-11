@@ -143,10 +143,14 @@ var maxConcurrentDownloads: Int
 `DownloadManager` 不直接持有 `SettingsRepository`，而是接收 lambda：
 
 ```kotlin
-threadProvider     = { platform -> settings.downloadThreadsFor(platform) }
+threadProvider     = { platform -> settings.defaultThreadsFor(platform) }
 concurrencyProvider = { settings.maxConcurrentDownloads }
 speedLimitProvider  = { settings.downloadSpeedLimit }
 ```
+
+> 线程数**不在设置页配置**：每次下载时在「下载直链」弹窗里选定，随任务写入 `DownloadTaskEntity.threadCount`
+> 并锁定（`runTask` 优先读任务级 threadCount，>0 时不再读 Provider）。
+> `threadProvider` 只兜底未指定线程数的入口（手动添加/更新 APK/批量下载），取 `lastDownloadThreads`（上次选择值）。
 
 新增可调参数时**沿用这个模式**，不要在构造时取快照值。
 
@@ -248,13 +252,15 @@ private const val STAGGER_CAP = 8; STAGGER_MS = 25L  // 错峰建连，平摊 TC
 ```
 
 - 迅雷并发超过约 8 会被降级为 `200` 整文件响应（忽略 Range）→ 整任务回退单流、速度暴跌。
-  故 `SettingsRepository.XUNLEI_DOWNLOAD_THREADS = 8` **固定不可改**，`setDownloadThreads` 对迅雷直接 return。
+  故兜底取值 `SettingsRepository.defaultThreadsFor()` 对迅雷固定返回 `XUNLEI_DOWNLOAD_THREADS = 8`，
+  且下载引擎对迅雷再按 `RANGE_WORKERS_CAP` 封顶 —— 弹窗里选更高的值对迅雷也不生效。
 - 提高任何平台的并发上限前，**必须实测是否触发 200 降级**，"并发越大越快"在网盘 CDN 上不成立。
 
 ### 5.4 断点续传与分片计划签名
 
 `plan.txt` 内容形如 `chunks=37 total=39536652 main=25`。
-跨会话改线程数或服务器探测大小变化会使旧 `part_i` 区间错位 → 检测到签名不一致时**整目录清空重下**。改动分片规划算法会让所有用户的现存断点失效，需在 PR 里说明。
+线程数按任务锁定后，同一任务的线程数不会跨会话变化（只剩服务器探测大小变化这一变量）；
+一旦计划不一致（如重新下载时改了线程数）→ 检测到签名不一致时**整目录清空重下**。改动分片规划算法会让所有用户的现存断点失效，需在 PR 里说明。
 
 分片缓存目录：`context.externalCacheDir/download_tmp/{taskId}/`
 （即 `/storage/emulated/0/Android/data/com.yunx.app/cache/download_tmp/{id}`）

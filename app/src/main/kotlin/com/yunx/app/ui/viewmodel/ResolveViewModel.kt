@@ -705,7 +705,9 @@ class ResolveViewModel(
     private suspend fun enqueueDownload(
         link: DownloadLink,
         credential: String,
-        fileName: String = link.filename
+        fileName: String = link.filename,
+        /** 本次下载选定的线程数（写入任务并锁定）；0 = 未指定，由下载管理器按平台取默认值 */
+        threadCount: Int = 0
     ) {
         val isUC = currentPlatform == SharePlatform.UC
         val isXunlei = currentPlatform == SharePlatform.XUNLEI
@@ -768,7 +770,8 @@ class ResolveViewModel(
             fileName = fileName,
             headers = headers,
             size = link.size,
-            platform = platform
+            platform = platform,
+            threadCount = threadCount
         ) {
             // 下载完成（master 版通过 onComplete 回调）：清理网盘临时转存目录；失败/取消不触发
             val dirFid = link.cleanupDirFid
@@ -782,7 +785,7 @@ class ResolveViewModel(
     }
 
     /** 将直链加入下载队列（单文件下载：入队后立即切换到下载页） */
-    fun startDownload(link: DownloadLink) {
+    fun startDownload(link: DownloadLink, threadCount: Int = 0) {
         viewModelScope.launch {
             // 开始下载：先关闭弹窗（临时转存由下载完成 onComplete 清理，不在此时删）
             downloadLink = null
@@ -791,7 +794,7 @@ class ResolveViewModel(
                 downloadError = "请先登录网盘"
                 return@launch
             }
-            enqueueDownload(link, credential)
+            enqueueDownload(link, credential, threadCount = threadCount)
             downloadStarted = true
         }
     }

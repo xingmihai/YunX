@@ -244,7 +244,8 @@ fun MainScreen() {
             context = context,
             dao = db.downloadTaskDao(),
             downloader = ChunkDownloader({ HttpClients.downloadClient() }),
-            threadProvider = { platform -> settings.downloadThreadsFor(platform) },
+            // 未在下载时指定线程数时的兜底（手动添加/更新 APK/批量下载）：上次选择值，迅雷固定 8
+            threadProvider = { platform -> settings.defaultThreadsFor(platform) },
             // 自定义下载保存目录（SAF tree Uri），设置页可选，动态生效
             saveDirProvider = { settings.downloadDirUri },
             // 网络与下载策略（设置页可调，动态生效）：并发任务数 / 全局限速 / 失败重试
@@ -644,7 +645,9 @@ fun MainScreen() {
                         baiduCloudViewModel,
                         c139CloudViewModel,
                         ucCloudViewModel,
-                        pan123CloudViewModel
+                        pan123CloudViewModel,
+                        initialThreads = settings.lastDownloadThreads,
+                        onThreadsSelected = { settings.lastDownloadThreads = it }
                     )
                     MainTab.Drive -> DriveScreen(
                         scrollBehavior = scrollBehavior,

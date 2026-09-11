@@ -24,6 +24,8 @@ import android.content.Context
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -39,12 +41,18 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -55,20 +63,30 @@ import com.yunx.app.data.network.model.DownloadLink
 import com.yunx.app.ui.SnackbarController
 import com.yunx.app.ui.rememberGlobalSnackbarHostState
 
+/** 可选线程数档位：覆盖小文件单线程到大文件满并发，512 为安全上限 */
+private val THREAD_OPTIONS = listOf(1, 2, 4, 8, 16, 32, 64, 128, 256, 512)
+
 /**
- * 下载直链弹窗：展示文件名与直链（长按直链复制），支持「开始下载」（分片多线程下载）。
+ * 下载直链弹窗：展示文件名与直链（长按直链复制），下载前选定线程数，支持「开始下载」（分片多线程下载）。
+ * 线程数按任务锁定：任务开始后不再变更，避免分片计划变化导致续传文件损坏。
  * 点「关闭」或弹窗外（管壁）关闭 = 放弃下载，由上层清理临时转存。
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun DownloadLinkDialog(
     link: DownloadLink,
-    onDownload: () -> Unit,
+    /** 预选线程数（上次选择值） */
+    initialThreads: Int = 32,
+    /** 开始下载（携带本次选定的线程数） */
+    onDownload: (Int) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     // Dialog 内提示宿主（AlertDialog 为独立窗口）
     val snackbarHostState = rememberGlobalSnackbarHostState()
+    // 本次选择的线程数（预填上次数值，可改；确认后写入任务并锁定）
+    var threads by remember { mutableIntStateOf(initialThreads.coerceIn(1, 512)) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -122,7 +140,29 @@ fun DownloadLinkDialog(
                     )
                 }
                 Text(
-                    text = "点击「开始下载」将分片多线程下载并保存到 Download 目录",
+                    text = "下载线程数",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    THREAD_OPTIONS.forEach { value ->
+                        FilterChip(
+                            selected = threads == value,
+                            onClick = { threads = value },
+                            label = { Text("$value") },
+                            shape = MaterialTheme.shapes.small,
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        )
+                    }
+                }
+                Text(
+                    text = "线程数不是越多越好，网盘与 CDN 有并发上限（迅雷自动封顶 8）；任务开始后不可修改",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -132,7 +172,7 @@ fun DownloadLinkDialog(
         },
         confirmButton = {
             Button(
-                onClick = { onDownload() }
+                onClick = { onDownload(threads) }
             ) {
                 Icon(
                     imageVector = Icons.Outlined.Download,
@@ -140,7 +180,7 @@ fun DownloadLinkDialog(
                     modifier = Modifier.size(16.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("开始下载")
+                Text("开始下载（$threads 线程）")
             }
         },
         dismissButton = {
