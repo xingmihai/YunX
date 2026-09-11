@@ -18,7 +18,6 @@
 
 package com.yunx.app.ui.screens
 
-import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -49,7 +48,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -78,11 +76,10 @@ fun UpdateDialog(
     onIgnore: () -> Unit,
     downloading: Boolean = false
 ) {
-    val context = LocalContext.current
     val apk = remember(release) { UpdateChecker.preferredApk(release.assets) }
     val published = remember(release) { release.publishedAt.substringBefore("T", "") }
-    // 两侧统一格式：优先 versionCode（yyyy.MM.dd-HH），旧版本回退 versionName
-    val labels = remember(release, currentVersion) { versionLabels(release, context, currentVersion) }
+    // 两侧统一格式：均为 versionName（yyyy.MM.dd.HH.mm），统一去掉 v 前缀
+    val labels = remember(release, currentVersion) { versionLabels(release, currentVersion) }
 
     Dialog(onDismissRequest = onLater) {
         Surface(
@@ -237,29 +234,16 @@ fun UpdateDialog(
 }
 
 /**
- * 版本对比文案，两侧**统一格式**。
+ * 版本对比文案，两侧**统一格式**（都去掉 `v` 前缀）。
  *
- * 优先用 versionCode 格式化为 `yyyy.MM.dd-HH`（如 `2026.09.11-22`）：
- * versionName 只精确到天，同一天多次构建时两侧会显示成完全相同
- * （`2026.09.11 → 2026.09.11`），用户看不出到底更新了什么；
- * 而实际判定依据是 versionCode，用它展示才与判定结果一致。
- *
- * 旧版本（versionCode 非日期格式，如 1.3.x 时代的 12）回退到 versionName，
- * 并统一去掉 `v` 前缀，避免一侧有前缀一侧没有。
+ * versionName 现在是 `yyyy.MM.dd.HH.mm`（分钟精度），已足以区分同日多次构建，
+ * 展示直接用它即可；判定新旧仍由 UpdateChecker.isNewer() 用 versionCode 完成。
  */
 private fun versionLabels(
     release: UpdateChecker.Release,
-    context: Context,
     fallbackCurrent: String
-): Pair<String, String> {
-    val local = UpdateChecker.formatVersionCode(UpdateChecker.currentVersionCode(context))
-    val remote = release.versionCode?.let { UpdateChecker.formatVersionCode(it) }
-    return if (local != null && remote != null) {
-        local to remote
-    } else {
-        fallbackCurrent to release.displayName.trimStart('v', 'V')
-    }
-}
+): Pair<String, String> = fallbackCurrent.trimStart('v', 'V') to
+    release.displayName.trim().trimStart('v', 'V')
 
 private fun formatSize(bytes: Long?): String? {
     if (bytes == null || bytes <= 0) return null

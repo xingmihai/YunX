@@ -20,9 +20,6 @@ package com.yunx.app.data.update
 
 import android.content.Context
 import android.os.Build
-import java.time.LocalDateTime
-import java.time.format.DateTimeFormatter
-import java.time.format.ResolverStyle
 import com.yunx.app.data.network.HttpClients
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -133,28 +130,6 @@ object UpdateChecker {
                 info.versionCode.toLong()
             }
         }.getOrDefault(0L)
-
-    /**
-     * 把 versionCode（`yyyyMMddHH`，如 2026091122）格式化为 `yyyy.MM.dd-HH`
-     * （如 `2026.09.11-22`）；非该格式的旧 versionCode（如 12）返回 null。
-     *
-     * 用于弹窗版本对比：versionName 只精确到天，同一天多次构建时两侧显示会完全相同，
-     * 而实际比较依据的是 versionCode，用它展示才与判定结果一致。
-     */
-    fun formatVersionCode(code: Long): String? {
-        if (code <= 0L) return null
-        val s = code.toString()
-        if (s.length != 10) return null
-        // ★ 严格校验：先用 STRICT 解析器确认它真的是一个 yyyyMMddHH 日期时间。
-        //   只查长度会把 2026134099 也当成合法值，格式化成 "2026.13.40-99"；
-        //   而 extractVersionCode() 接受任意数字 tag，畸形 tag 就会以日期面目展示。
-        //   用 STRICT 解析可一并排除 2 月 31 日、13 月这类不存在的日期
-        //   （手工比对 month/day 范围做不到这点）。
-        runCatching {
-            LocalDateTime.parse(s, VERSION_CODE_PARSER)
-        }.getOrNull() ?: return null
-        return "${s.substring(0, 4)}.${s.substring(4, 6)}.${s.substring(6, 8)}-${s.substring(8, 10)}"
-    }
 
     /**
      * 判断远程 Release 是否比本地更新。
@@ -341,15 +316,6 @@ object UpdateChecker {
     /** `<br>` 后吃掉紧跟的空白/换行：源码中 `<br>` 后通常还有一个真实换行，
      *  只替换标签会得到 `\n\n` → 段落断开，列表项续行被拆散 */
     private val BR_HTML = Regex("<br\\s*/?>\\s*", RegexOption.IGNORE_CASE)
-
-    /**
-     * versionCode（yyyyMMddHH）严格解析器。
-     * `uuuu` 而非 `yyyy`：STRICT 解析器下 `yyyy` 是「年-era」，缺少 era 会解析失败，
-     * 必须用 `uuuu`（纯年份）才能配合 ResolverStyle.STRICT 正常工作。
-     */
-    private val VERSION_CODE_PARSER: DateTimeFormatter = DateTimeFormatter
-        .ofPattern("uuuuMMddHH")
-        .withResolverStyle(ResolverStyle.STRICT)
 
     /**
      * 把 Atom `<content>` 里的 HTML 转成 Markdown，使两个数据源（REST API 的 Markdown、

@@ -346,16 +346,22 @@ private const val STAGGER_CAP = 8; STAGGER_MS = 25L  // 错峰建连，平摊 TC
 
 版本号由构建日期在 `app/build.gradle.kts` 中生成，源码里**没有字面量**：
 
-- `versionCode = yyyyMMddHH`（如 `2026091113`）
-- `versionName = yyyy.MM.dd`（如 `2026.09.11`）
+- `versionCode` = 1970-01-01 起的**分钟数**（epoch minutes，现约 2981 万，8 位）
+- `versionName = yyyy.MM.dd.HH.mm`（如 `2026.09.11.22.30`）
 - 时区固定 Asia/Shanghai
 
 发版时的两个字段**必须区分开**：
 
 | 字段 | 取值 | 用途 |
 |---|---|---|
-| git tag | `v<versionCode>`，如 `v2026091113` | 版本比较、忽略本次去重 |
-| Release 名称 | `v<versionName>`，如 `v2026.09.11` | 弹窗展示 |
+| git tag | `v<versionCode>`，如 `v29818972` | 版本比较、忽略本次去重 |
+| Release 名称 | `v<versionName>`，如 `v2026.09.11.22.30` | 弹窗展示 |
+
+★ **versionCode 为什么用 epoch 分钟数而非 `yyyyMMddHHmm`**：versionCode 是 `Int`，
+上限 2147483647。`yyyyMMddHHmm` 是 12 位，必然溢出；而 `yyyyMMddHH`（10 位）
+精度只到小时 —— 同一小时内重复构建会算出**相同** versionCode，导致 tag 复用、
+APK 被覆盖但版本号不变，已安装用户永远收不到更新（静默失效，且无任何提示）。
+epoch 分钟数 8 位、单调递增、精度到分钟，可安全用到 6053 年初。
 
 ★ **为什么比较必须用 versionCode**：`UpdateChecker.isNewer()` 优先比 versionCode。
 versionName 有两个致命问题——可能回退（1.3.1 → 1.0.0 会让用户收不到更新），
@@ -366,9 +372,9 @@ versionCode 单调递增，两种情况都能正确处理。
 tag 是唯一能拿到真实 versionCode 的途径。`extractVersionCode()` 从 tag 解析；
 tag 不符合约定时返回 null，自动回退到 versionName 比较（兼容历史 tag）。
 
-弹窗的版本对比两侧统一用 **versionCode 格式化**（`yyyy.MM.dd-HH`）：
-versionName 只精确到天，同日多次构建两侧显示会完全相同，而判定依据是 versionCode。
-见 `UpdateChecker.formatVersionCode()` 与 `UpdateDialog.versionLabels()`。
+弹窗的版本对比两侧统一用 **versionName**（现为分钟精度 `yyyy.MM.dd.HH.mm`），
+并去掉 `v` 前缀；判定新旧仍由 `isNewer()` 用 versionCode 完成。
+见 `UpdateDialog.versionLabels()`。
 
 CI 读取版本号用 `./gradlew -q printVersion`（源码无字面量，grep 抠不到）。
 构建脚本里引用 `java.*` 必须 import 后用短名，不能写全限定名
@@ -386,9 +392,12 @@ CI 读取版本号用 `./gradlew -q printVersion`（源码无字面量，grep �
 连带约束：
 - **不要再让工作流监听 `push: tags`**（已移除）：自打的 tag 会再次触发构建，
   形成「打 tag → 构建 → 再打 tag」的无限循环；
-- 同一小时内重复构建时 tag 已存在 → 跳过打 tag 并告警，Release 复用同名 tag
+- 同一**分钟**内重复构建时 tag 已存在 → 跳过打 tag 并告警，Release 复用同名 tag
   （此时版本相同，用户本就不需要更新，语义正确）；
 - 手工发版走 `workflow_dispatch`（`publish_release` 默认 true），不要手推 tag；
+- ⚠️ epoch 分钟数（约 2981 万）**小于**历史 `yyyyMMddHH` 版本号（2026091122）。
+  已装旧测试包的设备 versionCode 更大，无法覆盖安装，需**先卸载** —— 仅限开发者测试机，
+  未对外发布过，影响可忽略；
 - **构建时间只算一次**：workflow 先算 `epoch`，再用 `-PbuildTime=<epochMillis>`
   传给 `printVersion` 与 `assemble*`。`app/build.gradle.kts` 支持该参数
   （其次读环境变量 `YUNX_BUILD_TIME`，都没有才 `now()`）。
