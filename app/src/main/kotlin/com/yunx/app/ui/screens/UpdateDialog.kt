@@ -256,7 +256,7 @@ fun UpdateDialog(
 
 // ---------------------------------------------------------------- Markdown 轻量渲染
 
-private enum class MdType { H1, H2, H3, BULLET, QUOTE, TEXT }
+private enum class MdType { H1, H2, H3, BULLET, QUOTE, DIVIDER, TEXT }
 
 private data class MdBlock(val type: MdType, val text: String)
 
@@ -283,7 +283,7 @@ private fun parseMarkdown(src: String): List<MdBlock> {
             t.startsWith("### ") -> { flushQuote(); out.add(MdBlock(MdType.H3, t.removePrefix("### ").trim())) }
             t.startsWith("## ") -> { flushQuote(); out.add(MdBlock(MdType.H2, t.removePrefix("## ").trim())) }
             t.startsWith("# ") -> { flushQuote(); out.add(MdBlock(MdType.H1, t.removePrefix("# ").trim())) }
-            t.matches(HR) -> flushQuote()
+            t.matches(HR) -> { flushQuote(); out.add(MdBlock(MdType.DIVIDER, "")) }
             t.startsWith("- ") || t.startsWith("* ") -> {
                 flushQuote(); out.add(MdBlock(MdType.BULLET, t.drop(2).trim()))
             }
@@ -330,6 +330,7 @@ private fun MarkdownBody(markdown: String, modifier: Modifier = Modifier) {
                 val gap = when (block.type) {
                     MdType.H1, MdType.H2, MdType.H3 -> 14.dp
                     MdType.BULLET -> 3.dp
+                    MdType.DIVIDER -> 12.dp
                     else -> 6.dp
                 }
                 Spacer(modifier = Modifier.height(gap))
@@ -364,6 +365,15 @@ private fun MarkdownBody(markdown: String, modifier: Modifier = Modifier) {
                         modifier = Modifier.weight(1f)
                     )
                 }
+                MdType.DIVIDER -> Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(
+                            color = MaterialTheme.colorScheme.outlineVariant,
+                            shape = RoundedCornerShape(1.dp)
+                        )
+                )
                 MdType.QUOTE -> Row(modifier = Modifier.height(IntrinsicSize.Min)) {
                     Box(
                         modifier = Modifier
