@@ -370,6 +370,22 @@ CI 读取版本号用 `./gradlew -q printVersion`（源码无字面量，grep �
 构建脚本里引用 `java.*` 必须 import 后用短名，不能写全限定名
 （Kotlin DSL 脚本作用域里 `java` 会被解析为 Java 插件扩展访问器）。
 
+### tag 由工作流自动创建，不要手工打
+
+`.github/workflows/build-apk.yml` 在**构建完成之后**用 Gradle 算出的 `code`
+自动创建并推送 tag `v<versionCode>`，再用它发布 Release。
+
+★ 为什么必须自动化：versionCode 是构建时按小时生成的。若人工先打 tag 再触发构建，
+构建一旦跨过整点，APK 里的 versionCode 会比 tag +1 —— 远程反而小于本地，
+更新检测直接失效。此前就是靠人工卡整点规避，不可靠。
+
+连带约束：
+- **不要再让工作流监听 `push: tags`**（已移除）：自打的 tag 会再次触发构建，
+  形成「打 tag → 构建 → 再打 tag」的无限循环；
+- 同一小时内重复构建时 tag 已存在 → 跳过打 tag 并告警，Release 复用同名 tag
+  （此时版本相同，用户本就不需要更新，语义正确）；
+- 手工发版走 `workflow_dispatch`（`publish_release` 默认 true），不要手推 tag。
+
 ## 11. 更新检测只走 edge 镜像的网页端点，不用 REST API
 
 `UpdateChecker` 的所有请求统一走 `https://edge.gh.xmhai.cn/github.com/<owner>/<repo>`：
