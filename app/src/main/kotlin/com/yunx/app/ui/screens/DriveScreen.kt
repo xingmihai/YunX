@@ -72,6 +72,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.yunx.app.data.db.BaiduAccountEntity
 import com.yunx.app.data.db.C139AccountEntity
+import com.yunx.app.data.db.LanzouAccountEntity
 import com.yunx.app.data.db.Pan123AccountEntity
 import com.yunx.app.data.db.QuarkAccountEntity
 import com.yunx.app.data.db.UCAccountEntity
@@ -80,6 +81,7 @@ import com.yunx.app.data.network.model.QuotaInfo
 import com.yunx.app.ui.viewmodel.BaiduCloudViewModel
 import com.yunx.app.ui.viewmodel.C139CloudViewModel
 import com.yunx.app.ui.viewmodel.DriveQuotaViewModel
+import com.yunx.app.ui.viewmodel.LanzouCloudViewModel
 import com.yunx.app.ui.viewmodel.Pan123CloudViewModel
 import com.yunx.app.ui.viewmodel.QuarkCloudViewModel
 import com.yunx.app.ui.viewmodel.UCCoudViewModel
@@ -140,6 +142,10 @@ fun DriveScreen(
     onC139Logout: () -> Unit,
     onPan123Login: () -> Unit,
     onPan123Logout: () -> Unit,
+    lanzouAccount: LanzouAccountEntity?,
+    lanzouCloudViewModel: LanzouCloudViewModel,
+    onLanzouLogin: () -> Unit,
+    onLanzouLogout: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var showQuarkSheet by remember { mutableStateOf(false) }
@@ -160,6 +166,8 @@ fun DriveScreen(
     var showC139Cloud by rememberSaveable { mutableStateOf(false) }
     // 123 云盘浏览：网盘 Tab 内切换（非全屏）
     var showPan123Cloud by rememberSaveable { mutableStateOf(false) }
+    var showLanzouSheet by remember { mutableStateOf(false) }
+    var showLanzouCloud by rememberSaveable { mutableStateOf(false) }
 
     // 夸克：登录态由数据库驱动；已登录则副标题显示昵称
     val quark = DriveAccount(
@@ -204,6 +212,13 @@ fun DriveScreen(
         avatarText = "123",
         isLoggedIn = pan123Account != null
     )
+    val lanzou = DriveAccount(
+        id = "lanzou",
+        name = "蓝奏云",
+        description = lanzouAccount?.uid?.let { "用户 $it" } ?: "点击登录，支持云盘浏览",
+        avatarText = "蓝",
+        isLoggedIn = lanzouAccount != null
+    )
     val others = remember {
         emptyList<DriveAccount>()
     }
@@ -224,6 +239,7 @@ fun DriveScreen(
             showBaiduCloud -> 4
             showC139Cloud -> 5
             showPan123Cloud -> 6
+            showLanzouCloud -> 7
             else -> 0
         },
         transitionSpec = {
@@ -268,6 +284,11 @@ fun DriveScreen(
             scrollBehavior = scrollBehavior,
             onExit = { showPan123Cloud = false },
             onDownloadStarted = onDownloadStarted
+        )
+
+        7 -> LanzouCloudScreen(
+            viewModel = lanzouCloudViewModel,
+            onExit = { showLanzouCloud = false }
         )
             else -> PullToRefreshBox(
                 isRefreshing = isRefreshing,
@@ -385,6 +406,23 @@ fun DriveScreen(
                         }
                     )
                 }
+
+                item(key = lanzou.id) {
+                    DriveAccountCard(
+                        account = lanzou,
+                        quota = null,
+                        onClick = if (lanzou.isLoggedIn) {
+                            { showLanzouCloud = true }
+                        } else {
+                            onLanzouLogin
+                        },
+                        onMoreClick = if (lanzou.isLoggedIn) {
+                            { showLanzouSheet = true }
+                        } else {
+                            null
+                        }
+                    )
+                }
                 items(others, key = { it.id }) { account ->
                     DriveAccountCard(account = account)
                 }
@@ -462,6 +500,20 @@ fun DriveScreen(
                 showPan123Sheet = false
             },
             onDismiss = { showPan123Sheet = false }
+        )
+    }
+
+    // ★ 已登录蓝奏云：点击卡片弹出账号信息底部弹窗。
+    //   必须与 Pan123 的弹窗**平级**：嵌在 Pan123 的 if 里会导致
+    //   点蓝奏云的更多按钮时，必须 Pan123 弹窗同时打开才显示得出来。
+    if (showLanzouSheet && lanzouAccount != null) {
+        LanzouAccountSheet(
+            account = lanzouAccount,
+            onLogout = {
+                onLanzouLogout()
+                showLanzouSheet = false
+            },
+            onDismiss = { showLanzouSheet = false }
         )
     }
 }

@@ -28,8 +28,8 @@ import com.yunx.app.data.security.AndroidKeystoreCredentialCipher
 import com.yunx.app.data.security.CredentialCipher
 
 @Database(
-    entities = [QuarkAccountEntity::class, DownloadTaskEntity::class, UCAccountEntity::class, XunleiAccountEntity::class, BaiduAccountEntity::class, C139AccountEntity::class, Pan123AccountEntity::class, BookmarkEntity::class],
-    version = 14,
+    entities = [QuarkAccountEntity::class, DownloadTaskEntity::class, UCAccountEntity::class, XunleiAccountEntity::class, BaiduAccountEntity::class, C139AccountEntity::class, Pan123AccountEntity::class, BookmarkEntity::class, LanzouAccountEntity::class],
+    version = 15,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -48,6 +48,8 @@ abstract class AppDatabase : RoomDatabase() {
 
     abstract fun rawPan123AccountDao(): Pan123AccountDao
 
+    abstract fun rawLanzouAccountDao(): LanzouAccountDao
+
     abstract fun bookmarkDao(): BookmarkDao
 
     private lateinit var credentialCipher: CredentialCipher
@@ -58,6 +60,7 @@ abstract class AppDatabase : RoomDatabase() {
     fun baiduAccountDao(): BaiduAccountDao = SecureAccountDaos.baidu(rawBaiduAccountDao(), credentialCipher)
     fun c139AccountDao(): C139AccountDao = SecureAccountDaos.c139(rawC139AccountDao(), credentialCipher)
     fun pan123AccountDao(): Pan123AccountDao = SecureAccountDaos.pan123(rawPan123AccountDao(), credentialCipher)
+    fun lanzouAccountDao(): LanzouAccountDao = SecureAccountDaos.lanzou(rawLanzouAccountDao(), credentialCipher)
 
     companion object {
         @Volatile
@@ -70,7 +73,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "yunx.db"
                 )
-                    .addMigrations(MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
+                    .addMigrations(MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15)
                     // 早期开发版（1-8）无可靠 schema；从 v9 起必须保留凭证和下载任务
                     .fallbackToDestructiveMigrationFrom(1, 2, 3, 4, 5, 6, 7, 8)
                     .build()
@@ -104,6 +107,24 @@ abstract class AppDatabase : RoomDatabase() {
         private val MIGRATION_13_14 = object : Migration(13, 14) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE download_task ADD COLUMN threadCount INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /**
+         * v15：新增蓝奏云账号表。
+         * 仅建表，不影响既有表 —— 老用户升级后原有凭证与下载任务全部保留。
+         */
+        private val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `lanzou_account` (" +
+                        "`id` TEXT NOT NULL, " +
+                        "`cookie` TEXT NOT NULL, " +
+                        "`uid` TEXT NOT NULL, " +
+                        "`nickname` TEXT NOT NULL, " +
+                        "`updatedAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`id`))"
+                )
             }
         }
 

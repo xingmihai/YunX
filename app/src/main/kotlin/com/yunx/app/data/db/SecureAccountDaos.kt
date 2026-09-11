@@ -87,6 +87,17 @@ internal object SecureAccountDaos {
         override suspend fun clear() = raw.clear()
     }
 
+    fun lanzou(raw: LanzouAccountDao, cipher: CredentialCipher): LanzouAccountDao = object : LanzouAccountDao {
+        override fun observeAccount(): Flow<LanzouAccountEntity?> = raw.observeAccount().map { value ->
+            value?.let { decryptLanzou(raw, cipher, it) }
+        }
+        override suspend fun upsert(account: LanzouAccountEntity) = withContext(Dispatchers.IO) {
+            raw.upsert(encryptLanzou(cipher, account))
+        }
+        override suspend fun getAccount(): LanzouAccountEntity? = raw.getAccount()?.let { decryptLanzou(raw, cipher, it) }
+        override suspend fun clear() = raw.clear()
+    }
+
     fun xunlei(raw: XunleiAccountDao, cipher: CredentialCipher): XunleiAccountDao = object : XunleiAccountDao {
         override fun observeAccount(): Flow<XunleiAccountEntity?> = raw.observeAccount().map { value ->
             value?.let { decryptXunlei(raw, cipher, it) }
@@ -182,6 +193,18 @@ internal object SecureAccountDaos {
         deviceId = cipher.encrypt(value.deviceId, "xunlei.deviceId"),
         captchaToken = cipher.encrypt(value.captchaToken, "xunlei.captchaToken")
     )
+
+    private suspend fun decryptLanzou(raw: LanzouAccountDao, cipher: CredentialCipher, stored: LanzouAccountEntity): LanzouAccountEntity? =
+        withContext(Dispatchers.IO) {
+            decryptOrClear(raw::clear) {
+                val plain = stored.copy(cookie = cipher.decrypt(stored.cookie, "lanzou.cookie"))
+                if (!cipher.isEncrypted(stored.cookie)) raw.upsert(encryptLanzou(cipher, plain))
+                plain
+            }
+        }
+
+    private fun encryptLanzou(cipher: CredentialCipher, value: LanzouAccountEntity) =
+        value.copy(cookie = cipher.encrypt(value.cookie, "lanzou.cookie"))
 
     private suspend fun <T> decryptOrClear(clear: suspend () -> Unit, block: suspend () -> T): T? =
         try {

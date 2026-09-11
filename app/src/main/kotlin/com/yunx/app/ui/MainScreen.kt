@@ -99,6 +99,7 @@ import com.yunx.app.data.repository.BaiduAccountRepository
 import com.yunx.app.data.repository.BaiduResolveRepository
 import com.yunx.app.data.repository.C139AccountRepository
 import com.yunx.app.data.repository.C139ResolveRepository
+import com.yunx.app.data.repository.LanzouAccountRepository
 import com.yunx.app.data.repository.Pan123AccountRepository
 import com.yunx.app.data.repository.Pan123ResolveRepository
 import com.yunx.app.data.repository.QuarkAccountRepository
@@ -109,6 +110,7 @@ import com.yunx.app.data.repository.XunleiAccountRepository
 import com.yunx.app.data.repository.XunleiResolveRepository
 import com.yunx.app.ui.login.BaiduLoginScreen
 import com.yunx.app.ui.login.C139LoginScreen
+import com.yunx.app.ui.login.LanzouLoginScreen
 import com.yunx.app.ui.login.Pan123LoginScreen
 import com.yunx.app.ui.login.QuarkLoginScreen
 import com.yunx.app.ui.login.UCLoginScreen
@@ -133,6 +135,7 @@ import com.yunx.app.ui.viewmodel.C139CloudViewModel
 import com.yunx.app.ui.viewmodel.DownloadViewModel
 import com.yunx.app.ui.viewmodel.DriveQuotaViewModel
 import com.yunx.app.ui.viewmodel.Pan123AccountViewModel
+import com.yunx.app.ui.viewmodel.LanzouCloudViewModel
 import com.yunx.app.ui.viewmodel.Pan123CloudViewModel
 import com.yunx.app.ui.viewmodel.QuarkAccountViewModel
 import com.yunx.app.ui.viewmodel.QuarkCloudViewModel
@@ -168,6 +171,7 @@ fun MainScreen() {
     var showBaiduLogin by rememberSaveable { mutableStateOf(false) }
     var showC139Login by rememberSaveable { mutableStateOf(false) }
     var showPan123Login by rememberSaveable { mutableStateOf(false) }
+    var showLanzouLogin by rememberSaveable { mutableStateOf(false) }
     var showAbout by rememberSaveable { mutableStateOf(false) }
     var showSupport by rememberSaveable { mutableStateOf(false) }
     var showTheme by rememberSaveable { mutableStateOf(false) }
@@ -232,6 +236,7 @@ fun MainScreen() {
     val pan123Repository = remember {
         Pan123AccountRepository(db.pan123AccountDao(), pan123Api)
     }
+    val lanzouRepository = remember { LanzouAccountRepository(db.lanzouAccountDao()) }
     // 网盘认证备份：打包/恢复各平台凭证
     val backupManager = remember {
         AuthBackupManager(
@@ -379,6 +384,9 @@ fun MainScreen() {
             loginState = pan123LoginState
         )
     )
+    val lanzouCloudViewModel: LanzouCloudViewModel = viewModel(
+        factory = LanzouCloudViewModel.Factory(db.lanzouAccountDao())
+    )
     // 网盘空间详情：网盘页顶部「空间总览」展示 6 平台容量使用
     val driveQuotaViewModel: DriveQuotaViewModel = viewModel(
         factory = DriveQuotaViewModel.Factory(
@@ -451,6 +459,7 @@ fun MainScreen() {
     val baiduAccount by baiduViewModel.baiduAccount.collectAsState()
     val c139Account by c139ViewModel.c139Account.collectAsState()
     val pan123Account by pan123ViewModel.pan123Account.collectAsState()
+    val lanzouAccount by lanzouRepository.observeAccount().collectAsState(initial = null)
 
     // 首次下载引导：锁屏保持下载默认开启，但新用户未加入「忽略电池优化」白名单 →引导一次
     var showBatteryGuide by remember { mutableStateOf(false) }
@@ -589,6 +598,15 @@ fun MainScreen() {
         return
     }
 
+    if (showLanzouLogin) {
+        LanzouLoginScreen(
+            validateAndSave = { lanzouRepository.save(it) },
+            onBack = { showLanzouLogin = false },
+            onSaved = { showLanzouLogin = false }
+        )
+        return
+    }
+
     // 折叠标题状态提升到本层：跨页面共享，页面切换时折叠/展开状态保持不变
     // 用 exitUntilCollapsed（默认实现，含松手吸附）：滚动时标题先收起再滚内容；
     // 向上滚动回顶部过程中标题保持收起，只有列表到达最顶部后继续下拉（overscroll）才重新展开
@@ -686,7 +704,11 @@ fun MainScreen() {
                         onC139Login = { showC139Login = true },
                         onC139Logout = { c139ViewModel.logout() },
                         onPan123Login = { showPan123Login = true },
-                        onPan123Logout = { pan123ViewModel.logout() }
+                        onPan123Logout = { pan123ViewModel.logout() },
+                        lanzouAccount = lanzouAccount,
+                        lanzouCloudViewModel = lanzouCloudViewModel,
+                        onLanzouLogin = { showLanzouLogin = true },
+                        onLanzouLogout = { scope.launch { lanzouRepository.clear() } }
                     )
                     MainTab.Download -> DownloadScreen(scrollBehavior, downloadViewModel)
                     MainTab.Settings -> SettingsScreen(
