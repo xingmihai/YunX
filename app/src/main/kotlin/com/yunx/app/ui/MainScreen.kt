@@ -185,10 +185,23 @@ fun MainScreen() {
         showOnboarding = !prefs.getBoolean("onboarding_shown", false)
     }
 
-    // 更新检测：请求 GitHub 最新 Release（仓库无 Release / 网络失败则不提示）
+    // 更新检测：请求最新 Release（仓库无 Release / 网络失败则不提示）
     var showUpdateDialog by remember { mutableStateOf(false) }
     var pendingRelease by remember { mutableStateOf<UpdateChecker.Release?>(null) }
+    val api = remember { QuarkApi() }
+    val ucApi = remember { UCApi() }
+    val xunleiApi = remember { XunleiApi() }
+    val baiduApi = remember { BaiduApi() }
+    val c139Api = remember { C139Api() }
+    val pan123Api = remember { Pan123Api() }
+    val db = remember { AppDatabase.get(context) }
+    val settings = remember { SettingsRepository(context) }
+
+    // 更新检测：仅在开启「自动检查更新」时于冷启动检查一次
     LaunchedEffect(Unit) {
+        // 关闭后不再在冷启动时请求 Release 信息；
+        // 设置页的「检查更新」按钮不受影响，仍可手动检查
+        if (!settings.autoCheckUpdate) return@LaunchedEffect
         val release = UpdateChecker.fetchLatestRelease(context) ?: return@LaunchedEffect
         val prefs = context.getSharedPreferences("yunx_prefs", android.content.Context.MODE_PRIVATE)
         val ignored = prefs.getString("ignored_version", "")
@@ -198,14 +211,6 @@ fun MainScreen() {
             showUpdateDialog = true
         }
     }
-    val api = remember { QuarkApi() }
-    val ucApi = remember { UCApi() }
-    val xunleiApi = remember { XunleiApi() }
-    val baiduApi = remember { BaiduApi() }
-    val c139Api = remember { C139Api() }
-    val pan123Api = remember { Pan123Api() }
-    val db = remember { AppDatabase.get(context) }
-    val settings = remember { SettingsRepository(context) }
     // 下载线程数（上次选择）：rememberSaveable 使其成为可观察状态，确认后立即刷新后续弹窗的预填值。
     // 必须在 settings 之后声明（Composable 内顺序执行，前置引用会导致编译错误）
     var lastThreads by rememberSaveable { mutableIntStateOf(settings.lastDownloadThreads) }

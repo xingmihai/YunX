@@ -50,10 +50,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Article
 import androidx.compose.material.icons.outlined.Backup
 import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material.icons.outlined.CloudSync
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.Notifications
+import androidx.compose.material.icons.outlined.SettingsRemote
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Power
 import androidx.compose.material.icons.outlined.Refresh
@@ -100,6 +102,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.yunx.app.data.backup.AuthBackupManager
+import com.yunx.app.data.backup.WebDavClient
 import com.yunx.app.data.backup.AuthCrypto
 import com.yunx.app.data.download.DownloadSaver
 import com.yunx.app.data.prefs.SettingsRepository
@@ -108,6 +111,10 @@ import com.yunx.app.ui.SnackbarController
 import com.yunx.app.util.LogExporter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+
+/** WebDAV 上的备份文件名（固定名：恢复时无需用户选择，也便于识别） */
+private const val WEBDAV_BACKUP_FILE = "yunx-auth-backup.json"
+
 import kotlinx.coroutines.withContext
 
 
@@ -172,6 +179,12 @@ fun SettingsScreen(
     var keepLocked by remember { mutableStateOf(settingsRepo.keepDownloadWhenLocked) }
     var showSpeed by remember { mutableStateOf(settingsRepo.notificationShowSpeed) }
     var showBatteryDialog by remember { mutableStateOf(false) }
+    // 更新检测：自动检查开关（关掉仅影响冷启动自动检查，手动「检查更新」仍可用）
+    var autoCheckUpdate by remember { mutableStateOf(settingsRepo.autoCheckUpdate) }
+    // WebDAV 备份：配置对话框 / 备份口令对话框 / 处理中标记
+    var showWebDavConfigDialog by remember { mutableStateOf(false) }
+    var showWebDavBackupDialog by remember { mutableStateOf(false) }
+    var isWebDavBusy by remember { mutableStateOf(false) }
     // 通知是否可用（areNotificationsEnabled 不是 Compose 状态源，手动提升为状态，
     // 权限回调/从系统设置返回时刷新，保证副标题文案即时同步）
     var notificationsEnabled by remember {
@@ -379,7 +392,7 @@ fun SettingsScreen(
         SettingsItem(
             icon = Icons.Outlined.SystemUpdate,
             title = "检查更新",
-            description = "检查 GitHub 是否有新版本可用",
+            description = "检查是否有新版本可用",
             onClick = {
                 scope.launch {
                     SnackbarController.show("正在检查更新…")
@@ -393,6 +406,19 @@ fun SettingsScreen(
                     }
                 }
             }
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+        SettingsItem(
+            icon = Icons.Outlined.CloudSync,
+            title = "自动检查更新",
+            description = if (autoCheckUpdate) "每次启动 App 时自动检查新版本"
+            else "已关闭，仅在手动点击「检查更新」时检查",
+            onClick = {
+                autoCheckUpdate = !autoCheckUpdate
+                settingsRepo.autoCheckUpdate = autoCheckUpdate
+            },
+            trailing = { Switch(checked = autoCheckUpdate, onCheckedChange = null) }
         )
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -419,6 +445,71 @@ fun SettingsScreen(
             title = "导入网盘认证",
             description = "选择加密或明文的认证备份文件，恢复网盘登录",
             onClick = { importLauncher.launch(arrayOf("application/json", "application/octet-stream", "*/*")) }
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+        SettingsItem(
+            icon = Icons.Outlined.SettingsRemote,
+            title = "WebDAV 配置",
+            description = if (settingsRepo.isWebDavConfigured)
+                "已配置：${settingsRepo.webDavUrl}" else "未配置，设置后可备份到 WebDAV",
+            onClick = { showWebDavConfigDialog = true }
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+        SettingsItem(
+            icon = Icons.Outlined.Backup,
+            title = "备份到 WebDAV",
+            description = "用口令加密后上传到 WebDAV 服务器",
+            onClick = {
+                if (!settingsRepo.isWebDavConfigured) {
+                    SnackbarController.show("请先配置 WebDAV")
+                    showWebDavConfigDialog = true
+                } else {
+                    showWebDavBackupDialog = true
+                }
+            }
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+        SettingsItem(
+            icon = Icons.Outlined.Restore,
+            title = "从 WebDAV 恢复",
+            description = "下载云端备份并恢复网盘登录",
+            onClick = {
+                if (!settingsRepo.isWebDavConfigured) {
+                    SnackbarController.show("请先配置 WebDAV")
+                    showWebDavConfigDialog = true
+                    return@SettingsItem
+                }
+                scope.launch {
+                    isWebDavBusy = true
+                    try {
+                        val client = WebDavClient(
+                            settingsRepo.webDavUrl,
+                            settingsRepo.webDavUser,
+                            settingsRepo.webDavPassword
+                        )
+                        val text = withContext(Dispatchers.IO) { client.download(WEBDAV_BACKUP_FILE) }
+                        if (text.isNullOrBlank()) {
+                            SnackbarController.show("云端还没有备份")
+                            return@launch
+                        }
+                        if (AuthCrypto.isEncrypted(text)) {
+                            // 加密备份：复用本地导入流程，交给密码框解密
+                            pendingImportContent = text
+                            showImportAuthDialog = true
+                        } else {
+                            val count = withContext(Dispatchers.IO) { backupManager.importJson(text) }
+                            SnackbarController.show("已恢复 $count 个平台的认证信息")
+                        }
+                    } catch (e: Exception) {
+                        SnackbarController.show(e.message ?: "从 WebDAV 恢复失败")
+                    } finally {
+                        isWebDavBusy = false
+                    }
+                }
+            }
         )
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -564,6 +655,52 @@ fun SettingsScreen(
     }
 
 
+    // WebDAV 配置弹窗
+    if (showWebDavConfigDialog) {
+        WebDavConfigDialog(
+            initialUrl = settingsRepo.webDavUrl,
+            initialUser = settingsRepo.webDavUser,
+            onDismiss = { showWebDavConfigDialog = false },
+            onSave = { url, user, password ->
+                settingsRepo.webDavUrl = url
+                settingsRepo.webDavUser = user
+                if (password.isNotBlank()) settingsRepo.webDavPassword = password
+                SnackbarController.show("WebDAV 配置已保存")
+            }
+        )
+    }
+
+    // 备份到 WebDAV：输入加密口令
+    if (showWebDavBackupDialog) {
+        WebDavBackupDialog(
+            onDismiss = { showWebDavBackupDialog = false },
+            onConfirm = { password ->
+                showWebDavBackupDialog = false
+                scope.launch {
+                    isWebDavBusy = true
+                    try {
+                        val content = withContext(Dispatchers.IO) {
+                            backupManager.export(password = password, onlyLoggedIn = true)
+                        }
+                        val client = WebDavClient(
+                            settingsRepo.webDavUrl,
+                            settingsRepo.webDavUser,
+                            settingsRepo.webDavPassword
+                        )
+                        withContext(Dispatchers.IO) {
+                            client.upload(WEBDAV_BACKUP_FILE, content)
+                        }
+                        SnackbarController.show("已备份到 WebDAV")
+                    } catch (e: Exception) {
+                        SnackbarController.show(e.message ?: "备份到 WebDAV 失败")
+                    } finally {
+                        isWebDavBusy = false
+                    }
+                }
+            }
+        )
+    }
+
     // 导出网盘认证弹窗（AES 加密密码 + 导出范围）
     if (showExportAuthDialog) {
         ExportAuthDialog(
@@ -636,6 +773,7 @@ fun SettingsScreen(
     // 导出/导入处理中：转圈加载弹窗（PBKDF2 派生密钥耗时较长，避免用户以为界面卡死）
     if (isExporting) OperationLoadingDialog("正在导出认证…")
     if (isImporting) OperationLoadingDialog("正在导入认证…")
+    if (isWebDavBusy) OperationLoadingDialog("正在与 WebDAV 通信…")
 
     // 最大同时下载任务数
     if (showConcurrencyDialog) {
@@ -916,6 +1054,139 @@ private fun ExportAuthDialog(
                 onClick = { onConfirm(password, onlyLoggedIn) },
                 enabled = password.length >= 8
             ) { Text("导出") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
+    )
+}
+
+/**
+ * WebDAV 配置弹窗：服务器地址 / 用户名 / 密码，保存前可测试连接。
+ *
+ * 密码留空表示**保留原密码不变**（编辑地址或用户名时不该强制重输密码，
+ * 且弹窗里也不回显已保存的密码）。
+ */
+@Composable
+private fun WebDavConfigDialog(
+    initialUrl: String,
+    initialUser: String,
+    onDismiss: () -> Unit,
+    onSave: (url: String, user: String, password: String) -> Unit
+) {
+    var url by remember { mutableStateOf(initialUrl) }
+    var user by remember { mutableStateOf(initialUser) }
+    var password by remember { mutableStateOf("") }
+    var testing by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("WebDAV 配置") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = url,
+                    onValueChange = { url = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("服务器地址") },
+                    placeholder = { Text("https://dav.example.com/yunx") },
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = user,
+                    onValueChange = { user = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("用户名") },
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("密码（留空表示不修改）") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    singleLine = true
+                )
+                Text(
+                    text = "密码经 Android Keystore 加密后存储；备份内容本身再用你输入的口令加密一次，双重保护。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        confirmButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(
+                    onClick = {
+                        if (url.isBlank() || user.isBlank()) {
+                            SnackbarController.show("请填写服务器地址与用户名")
+                            return@TextButton
+                        }
+                        testing = true
+                        scope.launch {
+                            val result = withContext(Dispatchers.IO) {
+                                WebDavClient(url, user, password).testConnection()
+                            }
+                            testing = false
+                            SnackbarController.show(
+                                result.fold({ "连接成功" }, { "连接失败：${it.message}" })
+                            )
+                        }
+                    },
+                    enabled = !testing
+                ) { Text(if (testing) "测试中…" else "测试连接") }
+                Button(
+                    onClick = { onSave(url, user, password) },
+                    enabled = url.isNotBlank() && user.isNotBlank()
+                ) { Text("保存") }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
+    )
+}
+
+/**
+ * 备份到 WebDAV：输入加密口令。
+ *
+ * 与本地导出共用 AuthBackupManager 的加密实现（PBKDF2 + AES-GCM），
+ * 云端拿到的是密文，即使 WebDAV 服务器不可信也不会泄漏 Cookie。
+ */
+@Composable
+private fun WebDavBackupDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (password: String) -> Unit
+) {
+    var password by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("备份到 WebDAV") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = "设置一个至少 8 位的口令用于加密备份。恢复时需要输入同样的口令，请妥善保管。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("备份口令（至少 8 位）") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    singleLine = true
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onConfirm(password) },
+                enabled = password.length >= 8
+            ) { Text("加密并上传") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("取消") }
