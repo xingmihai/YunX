@@ -256,15 +256,19 @@ fun UpdateDialog(
 
 // ---------------------------------------------------------------- Markdown 轻量渲染
 
-private enum class MdType { H1, H2, H3, BULLET, QUOTE, DIVIDER, TEXT }
+private enum class MdType { H1, H2, H3, BULLET, ORDERED, QUOTE, DIVIDER, TEXT }
 
-private data class MdBlock(val type: MdType, val text: String)
+/** 有序列表：`1. xxx` / `2) xxx`；[number] 为序号，其余块为 null */
+private data class MdBlock(val type: MdType, val text: String, val number: Int? = null)
 
 /** 行内语法：**粗体** 与 `代码` */
 private val INLINE = Regex("""\*\*([^*]+)\*\*|`([^`]+)`""")
 
 /** 分隔线（---）：不渲染，仅用于切段 */
 private val HR = Regex("^-{3,}$")
+
+/** 有序列表项：`1. xxx` 或 `2) xxx` */
+private val ORDERED = Regex("""^(\d+)[.)]\s+(.*)$""")
 
 private fun parseMarkdown(src: String): List<MdBlock> {
     val out = ArrayList<MdBlock>()
@@ -287,7 +291,22 @@ private fun parseMarkdown(src: String): List<MdBlock> {
             t.startsWith("- ") || t.startsWith("* ") -> {
                 flushQuote(); out.add(MdBlock(MdType.BULLET, t.drop(2).trim()))
             }
-            else -> { flushQuote(); out.add(MdBlock(MdType.TEXT, t)) }
+            // 有序列表：保留序号（有序语义本身有意义），按列表样式缩进渲染
+            else -> {
+                val m = ORDERED.matchEntire(t)
+                if (m != null) {
+                    flushQuote()
+                    out.add(
+                        MdBlock(
+                            type = MdType.ORDERED,
+                            text = m.groupValues[2].trim(),
+                            number = m.groupValues[1].toIntOrNull()
+                        )
+                    )
+                } else {
+                    flushQuote(); out.add(MdBlock(MdType.TEXT, t))
+                }
+            }
         }
     }
     flushQuote()
@@ -329,7 +348,7 @@ private fun MarkdownBody(markdown: String, modifier: Modifier = Modifier) {
             if (index > 0) {
                 val gap = when (block.type) {
                     MdType.H1, MdType.H2, MdType.H3 -> 14.dp
-                    MdType.BULLET -> 3.dp
+                    MdType.BULLET, MdType.ORDERED -> 3.dp
                     MdType.DIVIDER -> 12.dp
                     else -> 6.dp
                 }
@@ -355,6 +374,21 @@ private fun MarkdownBody(markdown: String, modifier: Modifier = Modifier) {
                     Text(
                         text = "•",
                         style = bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    MdText(
+                        text = block.text,
+                        style = bodySmall.copy(lineHeight = 19.sp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                MdType.ORDERED -> Row(modifier = Modifier.padding(start = 2.dp)) {
+                    Text(
+                        text = "${block.number ?: 1}.",
+                        style = bodySmall,
+                        fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.primary
                     )
                     Spacer(modifier = Modifier.width(6.dp))
