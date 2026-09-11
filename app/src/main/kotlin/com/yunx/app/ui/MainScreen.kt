@@ -189,7 +189,7 @@ fun MainScreen() {
     var showUpdateDialog by remember { mutableStateOf(false) }
     var pendingRelease by remember { mutableStateOf<UpdateChecker.Release?>(null) }
     LaunchedEffect(Unit) {
-        val release = UpdateChecker.fetchLatestRelease() ?: return@LaunchedEffect
+        val release = UpdateChecker.fetchLatestRelease(context) ?: return@LaunchedEffect
         val current = UpdateChecker.currentVersion(context)
         val prefs = context.getSharedPreferences("yunx_prefs", android.content.Context.MODE_PRIVATE)
         val ignored = prefs.getString("ignored_version", "")

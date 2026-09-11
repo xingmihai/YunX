@@ -383,7 +383,7 @@ fun SettingsScreen(
             onClick = {
                 scope.launch {
                     SnackbarController.show("正在检查更新…")
-                    val release = runCatching { UpdateChecker.fetchLatestRelease() }.getOrNull()
+                    val release = runCatching { UpdateChecker.fetchLatestRelease(context) }.getOrNull()
                     val current = UpdateChecker.currentVersion(context)
                     if (release == null) {
                         SnackbarController.show("检查更新失败，请检查网络")
@@ -519,7 +519,7 @@ fun SettingsScreen(
                             showDevMenu = false
                             // 调试用途：直接弹出更新弹窗（不判断是否已是最新版），预览弹窗 UI
                             scope.launch {
-                                val release = runCatching { UpdateChecker.fetchLatestRelease() }.getOrNull()
+                                val release = runCatching { UpdateChecker.fetchLatestRelease(context) }.getOrNull()
                                 updateRelease = release ?: UpdateChecker.Release(
                                     tagName = "v1.2.4（预览）",
                                     body = "这是调试预览弹窗，用于查看更新弹窗 UI（含镜像站下载按钮）。",
