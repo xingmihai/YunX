@@ -244,7 +244,10 @@ object UpdateChecker {
             .substringBefore("</content>")
         Release(
             tagName = tag,
-            body = unescapeHtml(content).stripTags(),
+            // ★ Atom 的 <content> 是 **HTML**（GitHub 渲染后的产物），不是 Markdown 源码。
+            //   若只做 stripTags 会得到纯文本，结构（标题/列表/引用）全丢，
+            //   弹窗里再拿它当 Markdown 解析就等于没渲染。必须先转成 Markdown。
+            body = unescapeHtml(content).htmlToMarkdown(),
             assets = fetchAssetsFromWeb(tag),
             publishedAt = updated
         )
@@ -333,6 +336,82 @@ object UpdateChecker {
         replace(Regex("<[^>]+>"), "\n")
             .replace(Regex("\n{3,}"), "\n\n")
             .trim()
+
+    // ------------------------------------------------- Atom 的 HTML → Markdown
+
+    private val BLOCK_CLOSE = Regex(
+        "</?(p|div|h[1-6]|li|ul|ol|blockquote|pre|tr|table|section)[^>]*>",
+        RegexOption.IGNORE_CASE
+    )
+    private val H_TAG = Regex("<h([1-6])[^>]*>(.*?)</h\\1>", RegexOption.DOT_MATCHES_ALL or RegexOption.IGNORE_CASE)
+    private val LI_TAG = Regex("<li[^>]*>(.*?)</li>", RegexOption.DOT_MATCHES_ALL or RegexOption.IGNORE_CASE)
+    private val QUOTE_BLOCK = Regex(
+        "<blockquote[^>]*>(.*?)</blockquote>",
+        RegexOption.DOT_MATCHES_ALL or RegexOption.IGNORE_CASE
+    )
+    private val STRONG = Regex("<(strong|b)[^>]*>(.*?)</\\1>", RegexOption.DOT_MATCHES_ALL or RegexOption.IGNORE_CASE)
+    private val EM = Regex("<(em|i)[^>]*>(.*?)</\\1>", RegexOption.DOT_MATCHES_ALL or RegexOption.IGNORE_CASE)
+    private val CODE_HTML = Regex("<code[^>]*>(.*?)</code>", RegexOption.DOT_MATCHES_ALL or RegexOption.IGNORE_CASE)
+    private val PRE_HTML = Regex("<pre[^>]*>(.*?)</pre>", RegexOption.DOT_MATCHES_ALL or RegexOption.IGNORE_CASE)
+    private val ANCHOR = Regex("<a\\s[^>]*href=\"([^\"]*)\"[^>]*>(.*?)</a>", RegexOption.DOT_MATCHES_ALL or RegexOption.IGNORE_CASE)
+    private val HR_HTML = Regex("<hr\\s*/?>", RegexOption.IGNORE_CASE)
+    private val BR_HTML = Regex("<br\\s*/?>", RegexOption.IGNORE_CASE)
+
+    /**
+     * 把 Atom `<content>` 里的 HTML 转成 Markdown，使两个数据源（REST API 的 Markdown、
+     * Atom 的 HTML）在弹窗侧能用同一个 MarkdownText 渲染。
+     *
+     * 顺序有讲究：先抽出 `<pre>` 围栏整段保留（内部不做替换），再处理标题/列表/强调，
+     * 最后才去剩余标签 —— 反过来会把代码块里的 `<...>` 也吃掉。
+     */
+    private fun String.htmlToMarkdown(): String {
+        var s = this
+
+        // 1) 代码块整段抽成 ``` 围栏（内部内容原样保留）
+        s = PRE_HTML.replace(s) { m ->
+            val inner = m.groupValues[1].replace(Regex("<[^>]+>"), "")
+            "\n```\n${inner.trim()}\n```\n"
+        }
+        // 2) 引用块整段处理：内部先去掉块级标签，再逐行加 "> " 前缀。
+        //    若只在 <blockquote> 处插入 "> "，其内部的 <p> 会先换行 → 引用内容跑到块外
+        s = QUOTE_BLOCK.replace(s) { m ->
+            val inner = m.groupValues[1]
+                .replace(Regex("</?(p|div|br\\s*/?)[^>]*>", RegexOption.IGNORE_CASE), "\n")
+            val lines = inner.lineSequence()
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+            "\n" + lines.joinToString("\n") { "> $it" } + "\n"
+        }
+        // 3) 分隔线 / 换行
+        s = HR_HTML.replace(s, "\n---\n")
+        s = BR_HTML.replace(s, "\n")
+        // 4) 标题
+        s = H_TAG.replace(s) { m ->
+            "\n${"#".repeat(m.groupValues[1].toIntOrNull() ?: 2)} ${m.groupValues[2].trim()}\n"
+        }
+        // 5) 列表项（去空行，保持条目紧凑）
+        s = LI_TAG.replace(s) { m -> "- ${m.groupValues[1].trim()}" }
+        s = s.replace(Regex("(?m)^\\s*$"), "") // 列表项之间不留空行
+        // 6) 强调与行内代码
+        s = STRONG.replace(s) { m -> "**${m.groupValues[2].trim()}**" }
+        s = EM.replace(s) { m -> "*${m.groupValues[2].trim()}*" }
+        s = CODE_HTML.replace(s) { m -> "`${m.groupValues[1].trim()}`" }
+        // 7) 链接：[文本](url)，无文本时只留 url
+        s = ANCHOR.replace(s) { m ->
+            val text = m.groupValues[2].replace(Regex("<[^>]+>"), "").trim()
+            val url = m.groupValues[1]
+            if (text.isBlank()) url else "[$text]($url)"
+        }
+        // 8) 块级标签收尾处补换行，保证分段
+        s = BLOCK_CLOSE.replace(s, "\n")
+        // 9) 剩余行内标签一并去掉
+        s = s.replace(Regex("<[^>]+>"), "")
+        // 10) 归一化空行
+        return s.lineSequence()
+            .joinToString("\n")
+            .replace(Regex("\n{3,}"), "\n\n")
+            .trim()
+    }
 
     private fun unescapeHtml(s: String): String = s
         .replace("&lt;", "<")
