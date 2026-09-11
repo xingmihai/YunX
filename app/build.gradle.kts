@@ -25,6 +25,22 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+/**
+ * 按构建日期生成版本号，避免硬编码：
+ * - versionCode = yyyyMMddHH（10 位，单调递增，一天内多次构建也能区分）
+ * - versionName = yyyy.MM.dd（人类可读）
+ *
+ * ★ 用日期而非语义化版本的原因：语义化版本需要人工维护且可能回退
+ *   （如 1.3.1 → 1.0.0），而回退会让已装旧版的用户收不到更新提示
+ *   —— UpdateChecker 比较的是 versionName。日期天然单调递增，从根上避免此问题。
+ *
+ * 时区固定 UTC+8（Asia/Shanghai），保证本地与 CI 构建结果一致。
+ */
+val buildTime: java.time.ZonedDateTime =
+    java.time.ZonedDateTime.now(java.time.ZoneId.of("Asia/Shanghai"))
+val versionCodeInt: Int = buildTime.format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMddHH")).toInt()
+val versionNameStr: String = buildTime.format(java.time.format.DateTimeFormatter.ofPattern("yyyy.MM.dd"))
+
 android {
     namespace = "com.yunx.app"
     compileSdk = 36
@@ -33,8 +49,8 @@ android {
         applicationId = "com.yunx.app"
         minSdk = 23
         targetSdk = 34
-        versionCode = 100
-        versionName = "1.0.0"
+        versionCode = versionCodeInt
+        versionName = versionNameStr
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -94,4 +110,18 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
+}
+
+/**
+ * 供 CI 读取版本号：输出 `name=<versionName>` 与 `code=<versionCode>`。
+ *
+ * ★ versionName 现在由构建日期生成、不再是字面量，CI 不能再靠
+ *   `grep versionName | sed` 从源码里抠字符串（抠不到引号内容）。
+ *   必须由 Gradle 自己算出来再输出，保证单一数据源。
+ */
+tasks.register("printVersion") {
+    doLast {
+        println("name=$versionNameStr")
+        println("code=$versionCodeInt")
+    }
 }

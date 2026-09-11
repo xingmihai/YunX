@@ -63,8 +63,15 @@ jobs:
       - name: 读取版本号
         id: version
         run: |
-          VERSION=$(grep -m1 'versionName' app/build.gradle.kts | sed -E 's/.*"(.*)".*/\1/')
-          echo "name=$VERSION" >> "$GITHUB_OUTPUT"
+          # ★ versionName/versionCode 由构建日期在 Gradle 中生成，源码里没有字面量，
+          #   不能再 grep 抠字符串。改由 Gradle 任务输出，保证单一数据源。
+          ./gradlew -q printVersion | tee /tmp/version.txt
+          NAME=$(grep '^name=' /tmp/version.txt | cut -d= -f2-)
+          CODE=$(grep '^code=' /tmp/version.txt | cut -d= -f2-)
+          if [ -z "$NAME" ]; then echo "::error::无法读取 versionName"; exit 1; fi
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "VERSION_NAME=$NAME" >> "$GITHUB_ENV"
 
       - name: 构建 Debug APK
         if: github.event.inputs.build_type != 'release'
