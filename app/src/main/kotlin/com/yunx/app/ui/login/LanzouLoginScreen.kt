@@ -40,7 +40,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import com.yunx.app.data.network.LanzouConstants
 import com.yunx.app.ui.SnackbarController
@@ -64,7 +63,6 @@ fun LanzouLoginScreen(
     /** 网络校验 + 落库，成功返回 true（由调用方注入 repository） */
     validateAndSave: suspend (String) -> Boolean
 ) {
-    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbarHostState = rememberGlobalSnackbarHostState()
     var isSaving by remember { mutableStateOf(false) }
