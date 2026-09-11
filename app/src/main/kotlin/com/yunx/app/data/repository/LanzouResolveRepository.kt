@@ -254,7 +254,7 @@ class LanzouResolveRepository : ShareResolveRepository {
                 DownloadLink(
                     fid = file.fid,
                     filename = file.fname,
-                    downloadUrl = vkjxld + hyggid,
+                    downloadUrl = vkjxld + hyggid + LanzouShareConstants.LANOSSO_SUFFIX,
                     size = file.fsize,
                     // ★ 取链与下载必须同一份 Cookie，否则直链返回 HTML 而非文件
                     cookie = api.cookieHeader(data.host),

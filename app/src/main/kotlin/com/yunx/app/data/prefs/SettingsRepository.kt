@@ -45,8 +45,14 @@ class SettingsRepository(context: Context) {
      * 未在下载时指定线程数时的兜底值（手动添加、更新 APK、批量下载等入口）。
      * 迅雷固定 8：其 CDN 对单文件并发 Range 有阈值，超过会被降级为 200 整文件。
      */
-    fun defaultThreadsFor(platform: String): Int =
-        if (platform == DownloadPlatform.XUNLEI) XUNLEI_DOWNLOAD_THREADS else lastDownloadThreads
+    fun defaultThreadsFor(platform: String): Int = when (platform) {
+        DownloadPlatform.XUNLEI -> XUNLEI_DOWNLOAD_THREADS
+        // 蓝奏云固定单流：直链走 ESA WAF，并发 Range 请求会触发 http_auto_ratelimit
+        // （返回 JS 挑战页而非文件），且服务端忽略 Range（返回 200 而非 206），
+        // 多线程本就无效。单流可把请求数降到最低，避免把 IP 推入限流。
+        DownloadPlatform.LANZOU -> LANZOU_DOWNLOAD_THREADS
+        else -> lastDownloadThreads
+    }
 
     /** 自定义下载保存目录（SAF tree Uri，content://...）；null/空 = 系统默认 Download 目录 */
     var downloadDirUri: String?
@@ -212,6 +218,8 @@ class SettingsRepository(context: Context) {
         const val DEFAULT_DOWNLOAD_THREADS = 32
         const val MAX_DOWNLOAD_THREADS = 512
         const val XUNLEI_DOWNLOAD_THREADS = 8
+        /** 蓝奏云固定单线程：见 [defaultThreadsFor] 注释（WAF 限流 + 服务端忽略 Range） */
+        const val LANZOU_DOWNLOAD_THREADS = 1
         const val DEFAULT_MAX_CONCURRENT_DOWNLOADS = 1
         const val DEFAULT_DOWNLOAD_RETRY_COUNT = 3
 

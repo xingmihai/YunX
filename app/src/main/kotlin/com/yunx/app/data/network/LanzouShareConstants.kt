@@ -49,11 +49,27 @@ object LanzouShareConstants {
      *   但抓包未覆盖到**实际下载请求**，无法确认带上是否会被拒。
      *   故默认留空（多数第三方实现亦不加），若下载失败改此常量即可。
      */
-    // ★ 已删除 LANOSSO_SUFFIX（原为猜测，抓包证伪）：
-    //   曾猜测直链需拼接 lanosso 后缀，但抓包显示 **lanosso 是 302 跳转的目标 CDN 域名**
-    //   （u5189768.dmpdmp.com/file/?... → 302 → h1052.lanosso.com/xxx.apk），
-    //   由服务器在 Location 里下发，不是客户端可拼接的 URL 参数。
-    //   保留该常量只会拼出错误 URL，故删除。
+    /**
+     * 直链后缀：**App 场景固定为 `&lanosso2`**（tp 页 JS 逻辑推导，非猜测）。
+     *
+     * tp 页源码：
+     * ```
+     * var lanosso = '';
+     * if (typeof(killdns)=='undefined'){
+     * var lanosso = '&lanosso2';
+     * }
+     * submit.href = vkjxld + hyggid + lanosso
+     * ```
+     * `killdns` 由 kdns.js 定义。浏览器加载了该脚本 → killdns 已定义 → 后缀为空；
+     * **App 不执行 JS**，killdns 必然未定义 → 后缀应为 `&lanosso2`。
+     *
+     * ★ 抓包佐证：浏览器发出的直链请求 URL 末尾**没有**该后缀，与上述分支一致。
+     *   反过来说明 App 走的是另一分支，必须补上，否则与服务端预期不符。
+     *
+     * 注：lanosso.com 同时是 302 跳转的目标 CDN 域名，两个概念不要混淆 ——
+     *   域名由服务端在 Location 下发，而这里的**后缀**是客户端拼的。
+     */
+    const val LANOSSO_SUFFIX = "&lanosso2"
 
     // ---------- 分享页（如 /ilXoR3yvb92b）----------
 
