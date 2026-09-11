@@ -704,7 +704,7 @@ fun MainScreen() {
                         onC139Login = { showC139Login = true },
                         onC139Logout = { c139ViewModel.logout() },
                         onPan123Login = { showPan123Login = true },
-                        onPan123Logout = { pan123ViewModel.logout() }
+                        onPan123Logout = { pan123ViewModel.logout() },
                         lanzouAccount = lanzouAccount,
                         lanzouCloudViewModel = lanzouCloudViewModel,
                         onLanzouLogin = { showLanzouLogin = true },
