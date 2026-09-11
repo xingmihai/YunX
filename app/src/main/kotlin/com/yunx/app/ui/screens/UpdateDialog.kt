@@ -18,6 +18,7 @@
 
 package com.yunx.app.ui.screens
 
+import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -48,6 +49,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -76,8 +78,11 @@ fun UpdateDialog(
     onIgnore: () -> Unit,
     downloading: Boolean = false
 ) {
+    val context = LocalContext.current
     val apk = remember(release) { UpdateChecker.preferredApk(release.assets) }
     val published = remember(release) { release.publishedAt.substringBefore("T", "") }
+    // 两侧统一格式：优先 versionCode（yyyy.MM.dd-HH），旧版本回退 versionName
+    val labels = remember(release, currentVersion) { versionLabels(release, context, currentVersion) }
 
     Dialog(onDismissRequest = onLater) {
         Surface(
@@ -114,7 +119,7 @@ fun UpdateDialog(
                         // 当前版本 → 新版本
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                text = currentVersion,
+                                text = labels.first,
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -128,9 +133,7 @@ fun UpdateDialog(
                                 color = MaterialTheme.colorScheme.primaryContainer
                             ) {
                                 Text(
-                                    // displayName 是 Release 名称（v2026.09.11），
-                                    // 比 tag（v2026091113，即 v+versionCode）可读
-                                    text = release.displayName,
+                                    text = labels.second,
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
                                     style = MaterialTheme.typography.labelMedium,
                                     fontWeight = FontWeight.Bold,
@@ -230,6 +233,31 @@ fun UpdateDialog(
                 }
             }
         }
+    }
+}
+
+/**
+ * 版本对比文案，两侧**统一格式**。
+ *
+ * 优先用 versionCode 格式化为 `yyyy.MM.dd-HH`（如 `2026.09.11-22`）：
+ * versionName 只精确到天，同一天多次构建时两侧会显示成完全相同
+ * （`2026.09.11 → 2026.09.11`），用户看不出到底更新了什么；
+ * 而实际判定依据是 versionCode，用它展示才与判定结果一致。
+ *
+ * 旧版本（versionCode 非日期格式，如 1.3.x 时代的 12）回退到 versionName，
+ * 并统一去掉 `v` 前缀，避免一侧有前缀一侧没有。
+ */
+private fun versionLabels(
+    release: UpdateChecker.Release,
+    context: Context,
+    fallbackCurrent: String
+): Pair<String, String> {
+    val local = UpdateChecker.formatVersionCode(UpdateChecker.currentVersionCode(context))
+    val remote = release.versionCode?.let { UpdateChecker.formatVersionCode(it) }
+    return if (local != null && remote != null) {
+        local to remote
+    } else {
+        fallbackCurrent to release.displayName.trimStart('v', 'V')
     }
 }
 
