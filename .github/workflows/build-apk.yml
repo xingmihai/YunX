@@ -139,7 +139,10 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish_release == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          name: YunX v${{ steps.version.outputs.name }}
+          # ★ Release 名称必须是纯版本号（v1.3.0），不要加 "YunX " 之类前缀：
+          #   App 端 Atom 兜底（releases.atom）在 <link href> 缺失时会从 <title> 提取 tag，
+          #   名称带前缀会让 tag 解析失败 → 更新检测静默失效。见 UpdateChecker.extractTag。
+          name: v${{ steps.version.outputs.name }}
           generate_release_notes: true
           files: |
             app/build/outputs/apk/debug/*.apk

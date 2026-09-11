@@ -335,3 +335,23 @@ private const val STAGGER_CAP = 8; STAGGER_MS = 25L  // 错峰建连，平摊 TC
 3. 首次启动会出现一个「官方开源版」安全提示弹窗（确认一次后不再出现），属于同一防御机制的正常产品行为，不是 bug。
 4. 常规业务开发（解析、下载、UI、Room 等）不会触及这些代码；若你的改动意外导致其编译报错，请优先调整自己的改动方式，而不是修改自检代码。
 5. 确因架构调整需要动这部分代码时，**必须先与作者沟通确认**，且改动不得降低其对抗静态分析的能力（不得引入明文特征、不得集中到单一易定位位置）。
+
+---
+
+## 10. 发版约定：Release 名称必须是纯版本号
+
+`.github/workflows/build-apk.yml` 里 Release 名称固定为 `v${{ steps.version.outputs.name }}`（如 `v1.3.0`），
+**不要改成 `YunX v1.3.0` 之类的带前缀名称**。
+
+原因：`UpdateChecker` 的网页兜底通道读 `releases.atom`，其中 `<entry><title>` 是 Release **名称**而非 git tag。
+`<link rel="alternate" href=".../releases/tag/<tag>>"` 才是权威 tag；仅当它缺失时才回退从 `<title>` 正则抽取版本号。
+名称带前缀时回退路径会失效，更糟的是 `compareVersions("YunX v1.3.0", "1.3.0")` 中 `"YunX v1".toIntOrNull()` 为 0，
+比较结果为 -1 → 判定「无新版本」→ **更新检测静默失效，用户完全看不到提示**。
+
+已做的双重保险：
+- `extractTag` 三级取值（link → `<id>` 末段 → title 正则）
+- `normalizeVersion` 剥离 v 前缀与名称前后缀后再比较
+- workflow 侧保持纯版本号命名，使回退路径也能拿到正确 tag
+
+改动 Release 命名或 `UpdateChecker` 解析逻辑时，需同时更新 `v1.3.0` 等已发布 Release 的名称，
+否则历史 Release 仍会用旧名称参与 Atom 解析。
