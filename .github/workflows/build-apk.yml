@@ -165,12 +165,13 @@ jobs:
           set -e
           CODE="${{ steps.version.outputs.code }}"
           TAG="v${CODE}"
-          # ★ tag 用 versionCode（v2026091121），Release 名称用 versionName（v2026.09.11）：
+          # ★ tag 用 versionCode（v29818972，epoch 分钟数），
+          #   Release 名称用 versionName（v2026.09.11.22.30）：
           #   Atom 通道不提供 versionCode 字段，tag 是 App 端唯一能拿到它的途径。
           #   由工作流在构建**之后**打 tag，可消除此前「人工在整点前打 tag、
           #   构建跨点后 versionCode +1，导致 tag 落后于 APK、更新检测失效」的问题。
           if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
-            echo "::warning::tag ${TAG} 已存在（同一小时内重复构建），跳过打 tag"
+            echo "::warning::tag ${TAG} 已存在（同一分钟内重复构建），跳过打 tag"
             echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
             echo "created=false" >> "$GITHUB_OUTPUT"
             exit 0

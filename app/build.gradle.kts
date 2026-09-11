@@ -21,6 +21,7 @@
 //   导致 `java.time` 报 Unresolved reference 'time'（Gradle 9 + Kotlin 2.2 必现）。
 //   import 按类路径全限定名解析、不受脚本作用域影响，因此改用短名引用。
 //   本脚本内**任何** java.* 引用都必须先 import 再用短名（含 Instant）。
+import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
 import java.time.ZonedDateTime
@@ -61,8 +62,22 @@ val buildTime: ZonedDateTime = run {
     epoch?.let { Instant.ofEpochMilli(it).atZone(ZoneId.of("Asia/Shanghai")) }
         ?: ZonedDateTime.now(ZoneId.of("Asia/Shanghai"))
 }
-val versionCodeInt: Int = buildTime.format(DateTimeFormatter.ofPattern("yyyyMMddHH")).toInt()
-val versionNameStr: String = buildTime.format(DateTimeFormatter.ofPattern("yyyy.MM.dd"))
+/**
+ * versionCode = **1970-01-01 起的分钟数**（epoch minutes）。
+ *
+ * ★ 为什么不是 `yyyyMMddHHmm`（12 位）：versionCode 是 Int，上限 2147483647，
+ *   该格式必然溢出。而 `yyyyMMddHH`（10 位）精度只到小时 —— 同一小时内
+ *   重复构建会算出相同 versionCode，导致 tag 复用、APK 被覆盖但版本号不变，
+ *   已安装用户永远收不到更新（静默失效，且无任何提示）。
+ *
+ * epoch 分钟数目前约 2981 万（8 位），既单调递增、精度到分钟，又远小于上限，
+ * 可安全用到 6053 年初（Int 上限对应 6053-01-23）。
+ */
+val versionCodeInt: Int = Duration.between(
+    Instant.EPOCH,
+    buildTime.toInstant()
+).toMinutes().toInt()
+val versionNameStr: String = buildTime.format(DateTimeFormatter.ofPattern("yyyy.MM.dd.HH.mm"))
 
 android {
     namespace = "com.yunx.app"
