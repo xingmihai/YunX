@@ -128,7 +128,9 @@ fun UpdateDialog(
                                 color = MaterialTheme.colorScheme.primaryContainer
                             ) {
                                 Text(
-                                    text = release.tagName,
+                                    // displayName 是 Release 名称（v2026.09.11），
+                                    // 比 tag（v2026091113，即 v+versionCode）可读
+                                    text = release.displayName,
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
                                     style = MaterialTheme.typography.labelMedium,
                                     fontWeight = FontWeight.Bold,

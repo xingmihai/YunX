@@ -384,10 +384,9 @@ fun SettingsScreen(
                 scope.launch {
                     SnackbarController.show("正在检查更新…")
                     val release = runCatching { UpdateChecker.fetchLatestRelease(context) }.getOrNull()
-                    val current = UpdateChecker.currentVersion(context)
                     if (release == null) {
                         SnackbarController.show("检查更新失败，请检查网络")
-                    } else if (UpdateChecker.compareVersions(release.tagName, current) > 0) {
+                    } else if (UpdateChecker.isNewer(release, context)) {
                         updateRelease = release
                     } else {
                         SnackbarController.show("已是最新版本")

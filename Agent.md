@@ -338,25 +338,33 @@ private const val STAGGER_CAP = 8; STAGGER_MS = 25L  // 错峰建连，平摊 TC
 
 ---
 
-## 10. 发版约定：Release 名称必须是纯版本号
+## 10. 发版约定：versionCode 打 tag，versionName 作 Release 名称
 
-`.github/workflows/build-apk.yml` 里 Release 名称固定为 `v${{ steps.version.outputs.name }}`（如 `v1.3.0`），
-**不要改成 `YunX v1.3.0` 之类的带前缀名称**。
+版本号由构建日期在 `app/build.gradle.kts` 中生成，源码里**没有字面量**：
 
-原因：`UpdateChecker` 的网页兜底通道读 `releases.atom`，其中 `<entry><title>` 是 Release **名称**而非 git tag。
-`<link rel="alternate" href=".../releases/tag/<tag>>"` 才是权威 tag；仅当它缺失时才回退从 `<title>` 正则抽取版本号。
-名称带前缀时回退路径会失效，更糟的是 `compareVersions("YunX v1.3.0", "1.3.0")` 中 `"YunX v1".toIntOrNull()` 为 0，
-比较结果为 -1 → 判定「无新版本」→ **更新检测静默失效，用户完全看不到提示**。
+- `versionCode = yyyyMMddHH`（如 `2026091113`）
+- `versionName = yyyy.MM.dd`（如 `2026.09.11`）
+- 时区固定 Asia/Shanghai
 
-已做的双重保险：
-- `extractTag` 三级取值（link → `<id>` 末段 → title 正则）
-- `normalizeVersion` 剥离 v 前缀与名称前后缀后再比较
-- workflow 侧保持纯版本号命名，使回退路径也能拿到正确 tag
+发版时的两个字段**必须区分开**：
 
-改动 Release 命名或 `UpdateChecker` 解析逻辑时，需同时更新 `v1.3.0` 等已发布 Release 的名称，
-否则历史 Release 仍会用旧名称参与 Atom 解析。
+| 字段 | 取值 | 用途 |
+|---|---|---|
+| git tag | `v<versionCode>`，如 `v2026091113` | 版本比较、忽略本次去重 |
+| Release 名称 | `v<versionName>`，如 `v2026.09.11` | 弹窗展示 |
 
----
+★ **为什么比较必须用 versionCode**：`UpdateChecker.isNewer()` 优先比 versionCode。
+versionName 有两个致命问题——可能回退（1.3.1 → 1.0.0 会让用户收不到更新），
+也可能重复（同日多次构建 versionName 恒为 yyyy.MM.dd，导致判定「无更新」）。
+versionCode 单调递增，两种情况都能正确处理。
+
+★ **为什么 tag 必须是 `v<versionCode>`**：Atom 通道不提供 versionCode 字段，
+tag 是唯一能拿到真实 versionCode 的途径。`extractVersionCode()` 从 tag 解析；
+tag 不符合约定时返回 null，自动回退到 versionName 比较（兼容历史 tag）。
+
+CI 读取版本号用 `./gradlew -q printVersion`（源码无字面量，grep 抠不到）。
+构建脚本里引用 `java.*` 必须 import 后用短名，不能写全限定名
+（Kotlin DSL 脚本作用域里 `java` 会被解析为 Java 插件扩展访问器）。
 
 ## 11. 更新检测只走 edge 镜像的网页端点，不用 REST API
 
