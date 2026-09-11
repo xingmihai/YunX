@@ -190,12 +190,10 @@ fun MainScreen() {
     var pendingRelease by remember { mutableStateOf<UpdateChecker.Release?>(null) }
     LaunchedEffect(Unit) {
         val release = UpdateChecker.fetchLatestRelease(context) ?: return@LaunchedEffect
-        val current = UpdateChecker.currentVersion(context)
         val prefs = context.getSharedPreferences("yunx_prefs", android.content.Context.MODE_PRIVATE)
         val ignored = prefs.getString("ignored_version", "")
-        if (UpdateChecker.compareVersions(release.tagName, current) > 0 &&
-            release.tagName != ignored
-        ) {
+        // ★ 用 versionCode 比较：versionName 可能回退或重复（按日期生成时同日相同）
+        if (UpdateChecker.isNewer(release, context) && release.tagName != ignored) {
             pendingRelease = release
             showUpdateDialog = true
         }

@@ -19,6 +19,7 @@
 package com.yunx.app.data.update
 
 import android.content.Context
+import android.os.Build
 import com.yunx.app.data.network.HttpClients
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -61,8 +62,17 @@ object UpdateChecker {
         val sizeBytes: Long? = null
     )
 
+    /**
+     * @param tagName git tag。**约定为 `v<versionCode>`**（如 `v2026091113`），
+     *   这是 Atom 通道唯一能拿到真实 versionCode 的途径（Atom 不提供该字段）。
+     *   用于版本比较与「忽略本次」去重。
+     * @param displayName Release 名称，约定为 `v<versionName>`（如 `v2026.09.11`），用于展示。
+     * @param versionCode 从 tag 解析出的 versionCode；tag 不符合约定时为 null。
+     */
     data class Release(
         val tagName: String,
+        val displayName: String = tagName,
+        val versionCode: Long? = null,
         val body: String,
         val assets: List<Asset>,
         val publishedAt: String
@@ -109,6 +119,42 @@ object UpdateChecker {
             context.packageManager.getPackageInfo(context.packageName, 0).versionName
         }.getOrNull() ?: "1.0"
 
+    /** 当前应用 versionCode（API 28+ 用 longVersionCode，低版本回退已废弃的 versionCode） */
+    fun currentVersionCode(context: Context): Long =
+        runCatching {
+            val info = context.packageManager.getPackageInfo(context.packageName, 0)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                info.longVersionCode
+            } else {
+                @Suppress("DEPRECATION")
+                info.versionCode.toLong()
+            }
+        }.getOrDefault(0L)
+
+    /**
+     * 判断远程 Release 是否比本地更新。
+     *
+     * ★ 优先比较 **versionCode**，而非 versionName：
+     * - versionName 可能回退（如 1.3.1 → 1.0.0），回退会让已装旧版的用户收不到更新提示；
+     * - versionName 可能重复（按构建日期生成时，同一天构建 versionName 恒为 yyyy.MM.dd），
+     *   重复会导致「明明是新构建却判定无更新」。
+     *   versionCode 单调递增，两种情况都能正确处理。
+     *
+     * 拿不到 versionCode（tag 不符合约定）时回退比较 versionName，保证旧版本仍可用。
+     */
+    fun isNewer(release: Release, context: Context): Boolean {
+        val remote = release.versionCode
+        if (remote != null) return remote > currentVersionCode(context)
+        return compareVersions(release.tagName, currentVersion(context)) > 0
+    }
+
+    /**
+     * 从 git tag 解析 versionCode：约定 tag 为 `v<versionCode>`。
+     * 返回 null 表示 tag 不符合约定（如历史 tag `v1.3.1`），此时走 versionName 比较。
+     */
+    private fun extractVersionCode(tag: String): Long? =
+        tag.trimStart('v', 'V').toLongOrNull()
+
     /**
      * 请求最新 Release；网络失败或仓库无 Release 时返回 null。
      *
@@ -141,6 +187,12 @@ object UpdateChecker {
             .substringBefore("</content>")
         Release(
             tagName = tag,
+            // <title> 是 Release 名称（v2026.09.11），比 tag（v2026091113）可读，用于展示
+            displayName = entry.substringAfter("<title>", "")
+                .substringBefore("</title>")
+                .trim()
+                .ifBlank { tag },
+            versionCode = extractVersionCode(tag),
             // ★ Atom 的 <content> 是 **HTML**（GitHub 渲染后的产物），不是 Markdown 源码。
             //   若只做 stripTags 会得到纯文本，结构（标题/列表/引用）全丢，
             //   弹窗里再拿它当 Markdown 解析就等于没渲染。必须先转成 Markdown。
