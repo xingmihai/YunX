@@ -35,6 +35,14 @@ class XunleiAccountRepository(
     fun observeAccount(): Flow<XunleiAccountEntity?> = dao.observeAccount()
 
     suspend fun getAccount(): XunleiAccountEntity? = dao.getAccount()
+    /** 本平台全部已保存账号（最近更新的在前），用于账号切换列表 */
+    fun observeAccounts(): Flow<List<XunleiAccountEntity>> = dao.observeAccounts()
+
+    /** 切换生效账号：此后该平台的 API 请求都使用它的凭证 */
+    suspend fun switchAccount(id: String) = dao.setActive(id)
+
+    /** 删除指定账号；若删掉的正好是生效账号，自动激活剩余最近的一个 */
+    suspend fun removeAccount(id: String) = dao.deleteAndEnsureActive(id)
 
     /** 账号密码登录；返回登录步骤（needSms=true 表示需短信验证，携带 smsCreditKey/smsToken） */
     suspend fun loginWithPassword(
@@ -66,9 +74,9 @@ class XunleiAccountRepository(
         // 换 token 前先 initCaptcha 拿 captcha_token（官方时序：smslogin → captcha/init → signin/token）
         val captchaToken = api.initCaptcha(deviceId, mobile) ?: ""
         val tokens = api.exchangeToken(step.sessionId, deviceId, captchaToken) ?: return false
-        dao.upsert(
+        dao.insertAsActive(
             XunleiAccountEntity(
-                id = "xunlei",
+                id = AccountIds.fromCredential("xunlei", tokens.second),
                 accessToken = tokens.first,
                 refreshToken = tokens.second,
                 deviceId = deviceId,
@@ -88,9 +96,9 @@ class XunleiAccountRepository(
         val deviceId = XunleiApi.newDeviceId()
         val captchaToken = api.initCaptcha(deviceId, username) ?: ""
         val tokens = api.exchangeToken(step.sessionId, deviceId, captchaToken) ?: return false
-        dao.upsert(
+        dao.insertAsActive(
             XunleiAccountEntity(
-                id = "xunlei",
+                id = AccountIds.fromCredential("xunlei", tokens.second),
                 accessToken = tokens.first,
                 refreshToken = tokens.second,
                 deviceId = deviceId,
@@ -108,6 +116,10 @@ class XunleiAccountRepository(
     }
 
     suspend fun logout() {
-        dao.clear()
+        // ★ 多账号：只退出**当前生效**账号，其余已保存账号保留。
+        //   单账号时代 clear() 与"删当前账号"等价；多账号下 clear() 会清空整表，
+        //   用户点一次"退出登录"就会丢掉所有账号，属于静默数据丢失。
+        //   删除后 Repository 会自动激活剩余最近的一个。
+        dao.getAccount()?.let { dao.deleteAndEnsureActive(it.id) }
     }
 }

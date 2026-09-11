@@ -42,8 +42,26 @@ class Pan123AccountViewModel(
             initialValue = null
         )
 
+    /** 本平台已保存的全部账号（用于切换列表） */
+    val pan123Accounts: StateFlow<List<Pan123AccountEntity>> = repository.observeAccounts()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = emptyList()
+        )
+
     /** 网页登录凭证（authorToken）校验并落库；返回是否保存成功（登录页「保存」与自动检测共用同一入口） */
     suspend fun saveToken(token: String): Boolean = repository.saveToken(token)
+
+    /** 切换到指定账号 */
+    fun switchAccount(id: String) {
+        viewModelScope.launch { repository.switchAccount(id) }
+    }
+
+    /** 删除指定账号 */
+    fun removeAccount(id: String) {
+        viewModelScope.launch { repository.removeAccount(id) }
+    }
 
     fun logout() {
         viewModelScope.launch { repository.logout() }

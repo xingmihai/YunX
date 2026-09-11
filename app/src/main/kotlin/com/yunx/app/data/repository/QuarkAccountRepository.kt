@@ -51,7 +51,7 @@ class QuarkAccountRepository(
             sinkScope.launch {
                 dao.getAccount()?.let { acc ->
                     if (acc.cookie != merged) {
-                        dao.upsert(acc.copy(cookie = merged, updatedAt = System.currentTimeMillis()))
+                        dao.insertAsActive(acc.copy(cookie = merged, updatedAt = System.currentTimeMillis()))
                     }
                 }
             }
@@ -61,6 +61,14 @@ class QuarkAccountRepository(
     fun observeAccount(): Flow<QuarkAccountEntity?> = dao.observeAccount()
 
     suspend fun getAccount(): QuarkAccountEntity? = dao.getAccount()
+    /** 本平台全部已保存账号（最近更新的在前），用于账号切换列表 */
+    fun observeAccounts(): Flow<List<QuarkAccountEntity>> = dao.observeAccounts()
+
+    /** 切换生效账号：此后该平台的 API 请求都使用它的凭证 */
+    suspend fun switchAccount(id: String) = dao.setActive(id)
+
+    /** 删除指定账号；若删掉的正好是生效账号，自动激活剩余最近的一个 */
+    suspend fun removeAccount(id: String) = dao.deleteAndEnsureActive(id)
 
     /**
      * 返回「保证 __puus 未过期」的 Cookie（下载前调用）：
@@ -89,7 +97,11 @@ class QuarkAccountRepository(
                 CookieManager.getInstance().flush()
             }
         }
-        dao.clear()
+        // ★ 多账号：只退出**当前生效**账号，其余已保存账号保留。
+        //   单账号时代 clear() 与"删当前账号"等价；多账号下 clear() 会清空整表，
+        //   用户点一次"退出登录"就会丢掉所有账号，属于静默数据丢失。
+        //   删除后 Repository 会自动激活剩余最近的一个。
+        dao.getAccount()?.let { dao.deleteAndEnsureActive(it.id) }
     }
 
     /**
@@ -100,7 +112,7 @@ class QuarkAccountRepository(
         val nickname = api.fetchNickname(cookie) ?: "夸克用户"
         dao.upsert(
             QuarkAccountEntity(
-                id = "quark",
+                id = AccountIds.fromCredential("quark", cookie),
                 cookie = cookie,
                 nickname = nickname
             )

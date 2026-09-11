@@ -24,6 +24,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import com.yunx.app.data.db.AccountIds
 import com.yunx.app.data.db.BaiduAccountDao
 import com.yunx.app.data.db.BaiduAccountEntity
 import com.yunx.app.data.db.C139AccountDao
@@ -171,9 +172,9 @@ class AuthBackupManager(
                 "quark" -> {
                     val c = obj.optString("cookie")
                     if (c.isNotBlank()) {
-                        quarkDao.upsert(
+                        quarkDao.insertAsActive(
                             QuarkAccountEntity(
-                                id = "quark", cookie = c,
+                                id = AccountIds.fromCredential("quark", c), cookie = c,
                                 nickname = obj.optString("nickname"),
                                 updatedAt = obj.optLong("updatedAt", System.currentTimeMillis())
                             )
@@ -183,9 +184,9 @@ class AuthBackupManager(
                 "uc" -> {
                     val c = obj.optString("cookie")
                     if (c.isNotBlank()) {
-                        ucDao.upsert(
+                        ucDao.insertAsActive(
                             UCAccountEntity(
-                                id = "uc", cookie = c,
+                                id = AccountIds.fromCredential("uc", c), cookie = c,
                                 nickname = obj.optString("nickname"),
                                 updatedAt = obj.optLong("updatedAt", System.currentTimeMillis())
                             )
@@ -195,9 +196,9 @@ class AuthBackupManager(
                 "xunlei" -> {
                     val t = obj.optString("accessToken")
                     if (t.isNotBlank()) {
-                        xunleiDao.upsert(
+                        xunleiDao.insertAsActive(
                             XunleiAccountEntity(
-                                id = "xunlei", accessToken = t,
+                                id = AccountIds.fromCredential("xunlei", t), accessToken = t,
                                 refreshToken = obj.optString("refreshToken"),
                                 deviceId = obj.optString("deviceId"),
                                 captchaToken = obj.optString("captchaToken"),
@@ -210,9 +211,9 @@ class AuthBackupManager(
                 "baidu" -> {
                     val c = obj.optString("cookie")
                     if (c.isNotBlank()) {
-                        baiduDao.upsert(
+                        baiduDao.insertAsActive(
                             BaiduAccountEntity(
-                                id = "baidu", cookie = c,
+                                id = AccountIds.fromCredential("baidu", c), cookie = c,
                                 nickname = obj.optString("nickname"),
                                 updatedAt = obj.optLong("updatedAt", System.currentTimeMillis())
                             )
@@ -222,9 +223,9 @@ class AuthBackupManager(
                 "c139" -> {
                     val c = obj.optString("cookie")
                     if (c.isNotBlank()) {
-                        c139Dao.upsert(
+                        c139Dao.insertAsActive(
                             C139AccountEntity(
-                                id = "c139", cookie = c,
+                                id = AccountIds.fromCredential("c139", c), cookie = c,
                                 authorization = obj.optString("authorization"),
                                 nickname = obj.optString("nickname"),
                                 updatedAt = obj.optLong("updatedAt", System.currentTimeMillis())
@@ -235,9 +236,9 @@ class AuthBackupManager(
                 "pan123" -> {
                     val t = obj.optString("accessToken")
                     if (t.isNotBlank()) {
-                        pan123Dao.upsert(
+                        pan123Dao.insertAsActive(
                             Pan123AccountEntity(
-                                id = "pan123", accessToken = t,
+                                id = AccountIds.fromCredential("pan123", t), accessToken = t,
                                 account = obj.optString("account"),
                                 nickname = obj.optString("nickname"),
                                 updatedAt = obj.optLong("updatedAt", System.currentTimeMillis())

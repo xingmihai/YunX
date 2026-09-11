@@ -26,9 +26,21 @@ import androidx.room.PrimaryKey
  */
 @Entity(tableName = "quark_account")
 data class QuarkAccountEntity(
+    /**
+     * 账号唯一标识：**cookie 的稳定 hash**（见各 Repository 的 save*），不再写死为 "quark"。
+     *
+     * ★ 为什么改：写死常量意味着一张表只能存一行，登录第二个账号会直接覆盖第一个，
+     *   也就无从"切换"。改成内容派生后 —— 同一 cookie 重复登录仍是同一行（覆盖更新，
+     *   符合预期），不同账号则各行其是。
+     */
     @PrimaryKey
-    val id: String = "quark",
+    val id: String = "",
     val cookie: String = "",
     val nickname: String = "",
-    val updatedAt: Long = System.currentTimeMillis()
+    val updatedAt: Long = System.currentTimeMillis(),
+    /**
+     * 是否为当前生效账号（1 = 生效）。同一平台内**至多一行**为 1。
+     * 旧数据经 14→15 迁移后，原本唯一的那行置为 1，行为不变。
+     */
+    val isActive: Int = 0
 )

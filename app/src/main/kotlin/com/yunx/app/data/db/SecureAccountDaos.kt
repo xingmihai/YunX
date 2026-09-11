@@ -96,11 +96,83 @@ internal object SecureAccountDaos {
         }
         override suspend fun getAccount(): XunleiAccountEntity? = raw.getAccount()?.let { decryptXunlei(raw, cipher, it) }
         override suspend fun clear() = raw.clear()
+        override fun observeAccounts(): Flow<List<QuarkAccountEntity>> = raw.observeAccounts().map { list ->
+            // 在 suspend 上下文中逐项解密；list.map 的普通 lambda 里不能调 suspend 函数
+            val result = ArrayList<QuarkAccountEntity>(list.size)
+            for (item in list) decryptQuark(raw, cipher, item)?.let { result.add(it) }
+            result
+        }
+        override suspend fun setActive(id: String) = raw.setActive(id)
+        override suspend fun clearActive() = raw.clearActive()
+        override suspend fun markActive(id: String) = raw.markActive(id)
+        override suspend fun deleteById(id: String) = raw.deleteById(id)
+        override suspend fun countActive(): Int = raw.countActive()
+        override suspend fun firstId(): String? = raw.firstId()
+        override fun observeAccounts(): Flow<List<UCAccountEntity>> = raw.observeAccounts().map { list ->
+            // 在 suspend 上下文中逐项解密；list.map 的普通 lambda 里不能调 suspend 函数
+            val result = ArrayList<UCAccountEntity>(list.size)
+            for (item in list) decryptUC(raw, cipher, item)?.let { result.add(it) }
+            result
+        }
+        override suspend fun setActive(id: String) = raw.setActive(id)
+        override suspend fun clearActive() = raw.clearActive()
+        override suspend fun markActive(id: String) = raw.markActive(id)
+        override suspend fun deleteById(id: String) = raw.deleteById(id)
+        override suspend fun countActive(): Int = raw.countActive()
+        override suspend fun firstId(): String? = raw.firstId()
+        override fun observeAccounts(): Flow<List<BaiduAccountEntity>> = raw.observeAccounts().map { list ->
+            // 在 suspend 上下文中逐项解密；list.map 的普通 lambda 里不能调 suspend 函数
+            val result = ArrayList<BaiduAccountEntity>(list.size)
+            for (item in list) decryptBaidu(raw, cipher, item)?.let { result.add(it) }
+            result
+        }
+        override suspend fun setActive(id: String) = raw.setActive(id)
+        override suspend fun clearActive() = raw.clearActive()
+        override suspend fun markActive(id: String) = raw.markActive(id)
+        override suspend fun deleteById(id: String) = raw.deleteById(id)
+        override suspend fun countActive(): Int = raw.countActive()
+        override suspend fun firstId(): String? = raw.firstId()
+        override fun observeAccounts(): Flow<List<C139AccountEntity>> = raw.observeAccounts().map { list ->
+            // 在 suspend 上下文中逐项解密；list.map 的普通 lambda 里不能调 suspend 函数
+            val result = ArrayList<C139AccountEntity>(list.size)
+            for (item in list) decryptC139(raw, cipher, item)?.let { result.add(it) }
+            result
+        }
+        override suspend fun setActive(id: String) = raw.setActive(id)
+        override suspend fun clearActive() = raw.clearActive()
+        override suspend fun markActive(id: String) = raw.markActive(id)
+        override suspend fun deleteById(id: String) = raw.deleteById(id)
+        override suspend fun countActive(): Int = raw.countActive()
+        override suspend fun firstId(): String? = raw.firstId()
+        override fun observeAccounts(): Flow<List<Pan123AccountEntity>> = raw.observeAccounts().map { list ->
+            // 在 suspend 上下文中逐项解密；list.map 的普通 lambda 里不能调 suspend 函数
+            val result = ArrayList<Pan123AccountEntity>(list.size)
+            for (item in list) decryptPan123(raw, cipher, item)?.let { result.add(it) }
+            result
+        }
+        override suspend fun setActive(id: String) = raw.setActive(id)
+        override suspend fun clearActive() = raw.clearActive()
+        override suspend fun markActive(id: String) = raw.markActive(id)
+        override suspend fun deleteById(id: String) = raw.deleteById(id)
+        override suspend fun countActive(): Int = raw.countActive()
+        override suspend fun firstId(): String? = raw.firstId()
+        override fun observeAccounts(): Flow<List<XunleiAccountEntity>> = raw.observeAccounts().map { list ->
+            // 在 suspend 上下文中逐项解密；list.map 的普通 lambda 里不能调 suspend 函数
+            val result = ArrayList<XunleiAccountEntity>(list.size)
+            for (item in list) decryptXunlei(raw, cipher, item)?.let { result.add(it) }
+            result
+        }
+        override suspend fun setActive(id: String) = raw.setActive(id)
+        override suspend fun clearActive() = raw.clearActive()
+        override suspend fun markActive(id: String) = raw.markActive(id)
+        override suspend fun deleteById(id: String) = raw.deleteById(id)
+        override suspend fun countActive(): Int = raw.countActive()
+        override suspend fun firstId(): String? = raw.firstId()
     }
 
     private suspend fun decryptQuark(raw: QuarkAccountDao, cipher: CredentialCipher, stored: QuarkAccountEntity): QuarkAccountEntity? =
         withContext(Dispatchers.IO) {
-            decryptOrClear(raw::clear) {
+            decryptOrClear({ if (stored.id.isBlank()) raw.clear() else raw.deleteById(stored.id) }) {
                 val plain = stored.copy(cookie = cipher.decrypt(stored.cookie, "quark.cookie"))
                 if (!cipher.isEncrypted(stored.cookie)) raw.upsert(encryptQuark(cipher, plain))
                 plain
@@ -109,7 +181,7 @@ internal object SecureAccountDaos {
 
     private suspend fun decryptUc(raw: UCAccountDao, cipher: CredentialCipher, stored: UCAccountEntity): UCAccountEntity? =
         withContext(Dispatchers.IO) {
-            decryptOrClear(raw::clear) {
+            decryptOrClear({ if (stored.id.isBlank()) raw.clear() else raw.deleteById(stored.id) }) {
                 val plain = stored.copy(cookie = cipher.decrypt(stored.cookie, "uc.cookie"))
                 if (!cipher.isEncrypted(stored.cookie)) raw.upsert(encryptUc(cipher, plain))
                 plain
@@ -118,7 +190,7 @@ internal object SecureAccountDaos {
 
     private suspend fun decryptBaidu(raw: BaiduAccountDao, cipher: CredentialCipher, stored: BaiduAccountEntity): BaiduAccountEntity? =
         withContext(Dispatchers.IO) {
-            decryptOrClear(raw::clear) {
+            decryptOrClear({ if (stored.id.isBlank()) raw.clear() else raw.deleteById(stored.id) }) {
                 val plain = stored.copy(cookie = cipher.decrypt(stored.cookie, "baidu.cookie"))
                 if (!cipher.isEncrypted(stored.cookie)) raw.upsert(encryptBaidu(cipher, plain))
                 plain
@@ -127,7 +199,7 @@ internal object SecureAccountDaos {
 
     private suspend fun decryptC139(raw: C139AccountDao, cipher: CredentialCipher, stored: C139AccountEntity): C139AccountEntity? =
         withContext(Dispatchers.IO) {
-            decryptOrClear(raw::clear) {
+            decryptOrClear({ if (stored.id.isBlank()) raw.clear() else raw.deleteById(stored.id) }) {
                 val plain = stored.copy(
                     cookie = cipher.decrypt(stored.cookie, "c139.cookie"),
                     authorization = cipher.decrypt(stored.authorization, "c139.authorization")
@@ -141,7 +213,7 @@ internal object SecureAccountDaos {
 
     private suspend fun decryptPan123(raw: Pan123AccountDao, cipher: CredentialCipher, stored: Pan123AccountEntity): Pan123AccountEntity? =
         withContext(Dispatchers.IO) {
-            decryptOrClear(raw::clear) {
+            decryptOrClear({ if (stored.id.isBlank()) raw.clear() else raw.deleteById(stored.id) }) {
                 val plain = stored.copy(accessToken = cipher.decrypt(stored.accessToken, "pan123.accessToken"))
                 if (!cipher.isEncrypted(stored.accessToken)) raw.upsert(encryptPan123(cipher, plain))
                 plain
@@ -150,7 +222,7 @@ internal object SecureAccountDaos {
 
     private suspend fun decryptXunlei(raw: XunleiAccountDao, cipher: CredentialCipher, stored: XunleiAccountEntity): XunleiAccountEntity? =
         withContext(Dispatchers.IO) {
-            decryptOrClear(raw::clear) {
+            decryptOrClear({ if (stored.id.isBlank()) raw.clear() else raw.deleteById(stored.id) }) {
                 val plain = stored.copy(
                     accessToken = cipher.decrypt(stored.accessToken, "xunlei.accessToken"),
                     refreshToken = cipher.decrypt(stored.refreshToken, "xunlei.refreshToken"),

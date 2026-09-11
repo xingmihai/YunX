@@ -47,6 +47,14 @@ class XunleiAccountViewModel(
             initialValue = null
         )
 
+    /** 本平台已保存的全部账号（用于切换列表） */
+    val xunleiAccounts: StateFlow<List<XunleiAccountEntity>> = repository.observeAccounts()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = emptyList()
+        )
+
     /** 密码登录结果（needSms=true 时 UI 切到短信验证步骤） */
     var loginStep by androidx.compose.runtime.mutableStateOf<XunleiLoginStep?>(null)
         private set
@@ -132,6 +140,16 @@ class XunleiAccountViewModel(
             val ok = repository.loginWithSms(mobile.trim(), code.trim(), creditKey, smsToken)
             if (!ok) loginError = "验证码校验失败"
         }
+    }
+
+    /** 切换到指定账号 */
+    fun switchAccount(id: String) {
+        viewModelScope.launch { repository.switchAccount(id) }
+    }
+
+    /** 删除指定账号 */
+    fun removeAccount(id: String) {
+        viewModelScope.launch { repository.removeAccount(id) }
     }
 
     fun logout() {

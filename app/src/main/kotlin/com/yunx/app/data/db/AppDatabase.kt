@@ -29,7 +29,7 @@ import com.yunx.app.data.security.CredentialCipher
 
 @Database(
     entities = [QuarkAccountEntity::class, DownloadTaskEntity::class, UCAccountEntity::class, XunleiAccountEntity::class, BaiduAccountEntity::class, C139AccountEntity::class, Pan123AccountEntity::class, BookmarkEntity::class],
-    version = 14,
+    version = 15,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -70,7 +70,10 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "yunx.db"
                 )
-                    .addMigrations(MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
+                    .addMigrations(
+                        MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12,
+                        MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15
+                    )
                     // 早期开发版（1-8）无可靠 schema；从 v9 起必须保留凭证和下载任务
                     .fallbackToDestructiveMigrationFrom(1, 2, 3, 4, 5, 6, 7, 8)
                     .build()
@@ -104,6 +107,36 @@ abstract class AppDatabase : RoomDatabase() {
         private val MIGRATION_13_14 = object : Migration(13, 14) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE download_task ADD COLUMN threadCount INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /**
+         * 14 → 15：账号表支持**多账号共存 + 切换**。
+         *
+         * 每个平台账号表新增 `isActive`（1 = 当前生效）。
+         * 旧数据里唯一的那行（主键仍为写死的 "quark" / "uc" / ... ）直接置为生效，
+         * 保证升级后已登录状态不丢、行为与升级前一致。
+         *
+         * ★ 注意：v15 这个版本号此前被蓝奏云用过（其 14→15 建了 `lanzou_account` 表）。
+         *   蓝奏云已回退，该表不再存在于 schema。若设备库正停在**蓝奏云版 v15**，
+         *   由于版本号相同、Room 只走 onOpen 校验 identity hash，本迁移**不会执行**，
+         *   会因 hash 不匹配而崩溃 —— 这类设备需卸载重装。
+         */
+        private val MIGRATION_14_15 = object : Migration(14, 15) {
+            private val tables = listOf(
+                "quark_account" to "quark",
+                "uc_account" to "uc",
+                "xunlei_account" to "xunlei",
+                "baidu_account" to "baidu",
+                "c139_account" to "c139",
+                "pan123_account" to "pan123"
+            )
+
+            override fun migrate(db: SupportSQLiteDatabase) {
+                tables.forEach { (table, legacyId) ->
+                    db.execSQL("ALTER TABLE `$table` ADD COLUMN isActive INTEGER NOT NULL DEFAULT 0")
+                    db.execSQL("UPDATE `$table` SET isActive = 1 WHERE id = '$legacyId'")
+                }
             }
         }
 

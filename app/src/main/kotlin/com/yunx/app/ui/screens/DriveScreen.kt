@@ -140,6 +140,17 @@ fun DriveScreen(
     onC139Logout: () -> Unit,
     onPan123Login: () -> Unit,
     onPan123Logout: () -> Unit,
+    /** 各平台已保存的全部账号（多账号共存，用于切换列表） */
+    quarkAccounts: List<QuarkAccountEntity> = emptyList(),
+    ucAccounts: List<UCAccountEntity> = emptyList(),
+    xunleiAccounts: List<XunleiAccountEntity> = emptyList(),
+    baiduAccounts: List<BaiduAccountEntity> = emptyList(),
+    c139Accounts: List<C139AccountEntity> = emptyList(),
+    pan123Accounts: List<Pan123AccountEntity> = emptyList(),
+    /** 切换生效账号：platform 见 PLATFORM_* 常量 */
+    onSwitchAccount: (platform: String, id: String) -> Unit = { _, _ -> },
+    /** 删除指定账号 */
+    onRemoveAccount: (platform: String, id: String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     var showQuarkSheet by remember { mutableStateOf(false) }
@@ -397,10 +408,13 @@ fun DriveScreen(
     if (showQuarkSheet && quarkAccount != null) {
         QuarkAccountSheet(
             account = quarkAccount,
+            accounts = quarkAccounts,
             onLogout = {
                 onQuarkLogout()
                 showQuarkSheet = false
             },
+            onSwitch = { onSwitchAccount("quark", it) },
+            onRemove = { onRemoveAccount("quark", it) },
             onDismiss = { showQuarkSheet = false }
         )
     }
@@ -409,10 +423,13 @@ fun DriveScreen(
     if (showUCSheet && ucAccount != null) {
         UCAccountSheet(
             account = ucAccount,
+            accounts = ucAccounts,
             onLogout = {
                 onUCLogout()
                 showUCSheet = false
             },
+            onSwitch = { onSwitchAccount("uc", it) },
+            onRemove = { onRemoveAccount("uc", it) },
             onDismiss = { showUCSheet = false }
         )
     }
@@ -421,10 +438,13 @@ fun DriveScreen(
     if (showXunleiSheet && xunleiAccount != null) {
         XunleiAccountSheet(
             account = xunleiAccount,
+            accounts = xunleiAccounts,
             onLogout = {
                 onXunleiLogout()
                 showXunleiSheet = false
             },
+            onSwitch = { onSwitchAccount("xunlei", it) },
+            onRemove = { onRemoveAccount("xunlei", it) },
             onDismiss = { showXunleiSheet = false }
         )
     }
@@ -433,10 +453,13 @@ fun DriveScreen(
     if (showBaiduSheet && baiduAccount != null) {
         BaiduAccountSheet(
             account = baiduAccount,
+            accounts = baiduAccounts,
             onLogout = {
                 onBaiduLogout()
                 showBaiduSheet = false
             },
+            onSwitch = { onSwitchAccount("baidu", it) },
+            onRemove = { onRemoveAccount("baidu", it) },
             onDismiss = { showBaiduSheet = false }
         )
     }
@@ -445,10 +468,13 @@ fun DriveScreen(
     if (showC139Sheet && c139Account != null) {
         C139AccountSheet(
             account = c139Account,
+            accounts = c139Accounts,
             onLogout = {
                 onC139Logout()
                 showC139Sheet = false
             },
+            onSwitch = { onSwitchAccount("c139", it) },
+            onRemove = { onRemoveAccount("c139", it) },
             onDismiss = { showC139Sheet = false }
         )
     }
@@ -457,10 +483,13 @@ fun DriveScreen(
     if (showPan123Sheet && pan123Account != null) {
         Pan123AccountSheet(
             account = pan123Account,
+            accounts = pan123Accounts,
             onLogout = {
                 onPan123Logout()
                 showPan123Sheet = false
             },
+            onSwitch = { onSwitchAccount("pan123", it) },
+            onRemove = { onRemoveAccount("pan123", it) },
             onDismiss = { showPan123Sheet = false }
         )
     }

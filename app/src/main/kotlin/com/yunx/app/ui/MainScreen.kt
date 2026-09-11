@@ -451,6 +451,13 @@ fun MainScreen() {
     val baiduAccount by baiduViewModel.baiduAccount.collectAsState()
     val c139Account by c139ViewModel.c139Account.collectAsState()
     val pan123Account by pan123ViewModel.pan123Account.collectAsState()
+    // 多账号：各平台已保存的全部账号（用于账号切换列表）
+    val quarkAccounts by viewModel.quarkAccounts.collectAsState()
+    val ucAccounts by ucViewModel.ucAccounts.collectAsState()
+    val xunleiAccounts by xunleiViewModel.xunleiAccounts.collectAsState()
+    val baiduAccounts by baiduViewModel.baiduAccounts.collectAsState()
+    val c139Accounts by c139ViewModel.c139Accounts.collectAsState()
+    val pan123Accounts by pan123ViewModel.pan123Accounts.collectAsState()
 
     // 首次下载引导：锁屏保持下载默认开启，但新用户未加入「忽略电池优化」白名单 →引导一次
     var showBatteryGuide by remember { mutableStateOf(false) }
@@ -686,7 +693,35 @@ fun MainScreen() {
                         onC139Login = { showC139Login = true },
                         onC139Logout = { c139ViewModel.logout() },
                         onPan123Login = { showPan123Login = true },
-                        onPan123Logout = { pan123ViewModel.logout() }
+                        onPan123Logout = { pan123ViewModel.logout() },
+                        quarkAccounts = quarkAccounts,
+                        ucAccounts = ucAccounts,
+                        xunleiAccounts = xunleiAccounts,
+                        baiduAccounts = baiduAccounts,
+                        c139Accounts = c139Accounts,
+                        pan123Accounts = pan123Accounts,
+                        // 用「平台 + 账号 id」两个通用回调分发：
+                        // 若为每个平台各开一对 onSwitch/onRemove，DriveScreen 会多出 12 个参数
+                        onSwitchAccount = { platform, id ->
+                            when (platform) {
+                                "quark" -> viewModel.switchAccount(id)
+                                "uc" -> ucViewModel.switchAccount(id)
+                                "xunlei" -> xunleiViewModel.switchAccount(id)
+                                "baidu" -> baiduViewModel.switchAccount(id)
+                                "c139" -> c139ViewModel.switchAccount(id)
+                                "pan123" -> pan123ViewModel.switchAccount(id)
+                            }
+                        },
+                        onRemoveAccount = { platform, id ->
+                            when (platform) {
+                                "quark" -> viewModel.removeAccount(id)
+                                "uc" -> ucViewModel.removeAccount(id)
+                                "xunlei" -> xunleiViewModel.removeAccount(id)
+                                "baidu" -> baiduViewModel.removeAccount(id)
+                                "c139" -> c139ViewModel.removeAccount(id)
+                                "pan123" -> pan123ViewModel.removeAccount(id)
+                            }
+                        }
                     )
                     MainTab.Download -> DownloadScreen(scrollBehavior, downloadViewModel)
                     MainTab.Settings -> SettingsScreen(
