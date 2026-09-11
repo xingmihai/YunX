@@ -58,11 +58,13 @@ private fun peekHtmlText(response: Response, limit: Int = 160): String {
     }
     if (raw.isBlank()) return "<空响应体>"
     val text = raw
-        .replace(Regex("<script[\s\S]*?</script>", RegexOption.IGNORE_CASE), " ")
-        .replace(Regex("<style[\s\S]*?</style>", RegexOption.IGNORE_CASE), " ")
-        .replace(Regex("<[^>]*>"), " ")
+        // ★ 必须用原始字符串 """..."""：普通字符串里 \s / \S 是**非法转义**，
+        //   整个文件会编译失败（Unsupported escape sequence）。
+        .replace(Regex("""<script[\s\S]*?</script>""", RegexOption.IGNORE_CASE), " ")
+        .replace(Regex("""<style[\s\S]*?</style>""", RegexOption.IGNORE_CASE), " ")
+        .replace(Regex("""<[^>]*>"""), " ")
         .replace("&nbsp;", " ")
-        .replace(Regex("\s+"), " ")
+        .replace(Regex("""\s+"""), " ")
         .trim()
     return if (text.length > limit) text.substring(0, limit) + "…" else text.ifBlank { "<无可提取文本>" }
 }
