@@ -57,6 +57,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -262,6 +263,9 @@ private data class MdBlock(val type: MdType, val text: String)
 /** 行内语法：**粗体** 与 `代码` */
 private val INLINE = Regex("""\*\*([^*]+)\*\*|`([^`]+)`""")
 
+/** 分隔线（---）：不渲染，仅用于切段 */
+private val HR = Regex("^-{3,}$")
+
 private fun parseMarkdown(src: String): List<MdBlock> {
     val out = ArrayList<MdBlock>()
     val quote = StringBuilder()
@@ -279,7 +283,7 @@ private fun parseMarkdown(src: String): List<MdBlock> {
             t.startsWith("### ") -> { flushQuote(); out.add(MdBlock(MdType.H3, t.removePrefix("### ").trim())) }
             t.startsWith("## ") -> { flushQuote(); out.add(MdBlock(MdType.H2, t.removePrefix("## ").trim())) }
             t.startsWith("# ") -> { flushQuote(); out.add(MdBlock(MdType.H1, t.removePrefix("# ").trim())) }
-            t.matches(Regex("^-{3,}$")) -> flushQuote() // 分隔线：不渲染，仅切段
+            t.matches(HR) -> flushQuote()
             t.startsWith("- ") || t.startsWith("* ") -> {
                 flushQuote(); out.add(MdBlock(MdType.BULLET, t.drop(2).trim()))
             }
@@ -290,7 +294,7 @@ private fun parseMarkdown(src: String): List<MdBlock> {
     return out
 }
 
-private fun inline(src: String): AnnotatedString = buildAnnotatedString {
+private fun renderInline(src: String): AnnotatedString = buildAnnotatedString {
     var cursor = 0
     for (m in INLINE.findAll(src)) {
         append(src.substring(cursor, m.range.first))
@@ -312,7 +316,7 @@ private fun MdText(
     color: Color,
     modifier: Modifier = Modifier
 ) {
-    val annotated = remember(text) { inline(text) }
+    val annotated = remember(text) { renderInline(text) }
     Text(text = annotated, style = style, color = color, modifier = modifier)
 }
 
