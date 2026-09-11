@@ -366,6 +366,10 @@ versionCode 单调递增，两种情况都能正确处理。
 tag 是唯一能拿到真实 versionCode 的途径。`extractVersionCode()` 从 tag 解析；
 tag 不符合约定时返回 null，自动回退到 versionName 比较（兼容历史 tag）。
 
+弹窗的版本对比两侧统一用 **versionCode 格式化**（`yyyy.MM.dd-HH`）：
+versionName 只精确到天，同日多次构建两侧显示会完全相同，而判定依据是 versionCode。
+见 `UpdateChecker.formatVersionCode()` 与 `UpdateDialog.versionLabels()`。
+
 CI 读取版本号用 `./gradlew -q printVersion`（源码无字面量，grep 抠不到）。
 构建脚本里引用 `java.*` 必须 import 后用短名，不能写全限定名
 （Kotlin DSL 脚本作用域里 `java` 会被解析为 Java 插件扩展访问器）。

@@ -132,6 +132,20 @@ object UpdateChecker {
         }.getOrDefault(0L)
 
     /**
+     * 把 versionCode（`yyyyMMddHH`，如 2026091122）格式化为 `yyyy.MM.dd-HH`
+     * （如 `2026.09.11-22`）；非该格式的旧 versionCode（如 12）返回 null。
+     *
+     * 用于弹窗版本对比：versionName 只精确到天，同一天多次构建时两侧显示会完全相同，
+     * 而实际比较依据的是 versionCode，用它展示才与判定结果一致。
+     */
+    fun formatVersionCode(code: Long): String? {
+        if (code <= 0L) return null
+        val s = code.toString()
+        if (s.length != 10) return null
+        return "${s.substring(0, 4)}.${s.substring(4, 6)}.${s.substring(6, 8)}-${s.substring(8, 10)}"
+    }
+
+    /**
      * 判断远程 Release 是否比本地更新。
      *
      * ★ 优先比较 **versionCode**，而非 versionName：
