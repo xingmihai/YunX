@@ -27,18 +27,55 @@ import org.json.JSONObject
 
 /**
  * GitHub Release 更新检测。
- * 真实实现：GET https://api.github.com/repos/xingmihai/YunX/releases/latest
+ *
+ * 三级取值策略（★ 核心：未认证请求只有 60 次/小时/IP，共享出口 IP 极易被打满）：
+ * 1. REST API `api.github.com/repos/xingmihai/YunX/releases/latest`，带 `If-None-Match` 条件请求
+ *    —— 命中 304 时**不计入限流额度**，日常检查基本零消耗；
+ * 2. 被限流（403 + X-RateLimit-Remaining=0）时读 `X-RateLimit-Reset` 进入冷却期，
+ *    冷却期内不再触碰 API，避免每次开 App 都浪费请求并误报「检查更新失败」；
+ * 3. 冷却期或 API 不可用时，走 `github.com` 网页端点（releases.atom / expanded_assets），
+ *    该域名不属于 REST API 限流桶，可正常取到最新 tag 与 APK 直链。
  */
 object UpdateChecker {
 
+    private const val OWNER = "xingmihai"
+    private const val REPO = "YunX"
+
     private const val RELEASES_LATEST_URL =
-        "https://api.github.com/repos/xingmihai/YunX/releases/latest"
+        "https://api.github.com/repos/$OWNER/$REPO/releases/latest"
+
+    /** 网页端点：Release Atom 源（github.com，不受 REST API 限流约束） */
+    private const val RELEASES_ATOM_URL =
+        "https://github.com/$OWNER/$REPO/releases.atom"
+
+    /** 网页端点：指定 tag 的附件列表（GitHub 网页异步展开 assets 用的片段） */
+    private fun expandedAssetsUrl(tag: String) =
+        "https://github.com/$OWNER/$REPO/releases/expanded_assets/$tag"
 
     /** GitHub 下载加速镜像站前缀（国内直连 GitHub 慢/失败时的兜底下载通道） */
     const val MIRROR_PREFIX = "https://cdn.gh-proxy.org/"
 
     /** 把 GitHub release 直链转成镜像站直链：https://cdn.gh-proxy.org/<原直链> */
     fun mirrorUrl(url: String): String = MIRROR_PREFIX + url
+
+    private const val PREFS = "yunx_update_check"
+    private const val KEY_ETAG = "etag"
+    private const val KEY_CACHE = "cached_json"
+    private const val KEY_RESET_AT = "rate_limit_reset_at"
+
+    /** API 限流冷却截止时间戳（毫秒）；在此时间前不再请求 REST API */
+    @Volatile
+    private var rateLimitResetAt: Long = 0L
+
+    /** context 不可用时的进程内兜底缓存（单次会话内有效） */
+    @Volatile
+    private var memEtag: String? = null
+
+    @Volatile
+    private var memCache: String? = null
+
+    @Volatile
+    private var stateRestored = false
 
     data class Asset(
         val name: String,
@@ -54,8 +91,8 @@ object UpdateChecker {
 
     /** 比较两个版本号：v1 > v2 返回正数，v1 < v2 返回负数，相等返回 0 */
     fun compareVersions(v1: String, v2: String): Int {
-        val parts1 = v1.trimStart('v').split(".")
-        val parts2 = v2.trimStart('v').split(".")
+        val parts1 = normalizeVersion(v1).split(".")
+        val parts2 = normalizeVersion(v2).split(".")
         val maxLength = maxOf(parts1.size, parts2.size)
         for (i in 0 until maxLength) {
             val num1 = parts1.getOrNull(i)?.toIntOrNull() ?: 0
@@ -73,37 +110,204 @@ object UpdateChecker {
 
     /**
      * 请求 GitHub 最新 Release；网络失败 / 仓库无 Release（404）返回 null。
+     *
+     * @param context 传入后可跨进程复用 ETag 缓存与限流冷却时间（不传则仅内存生效）
      */
-    suspend fun fetchLatestRelease(): Release? = withContext(Dispatchers.IO) {
-        runCatching {
-            val client = HttpClients.apiClient()
-            val request = Request.Builder()
-                .url(RELEASES_LATEST_URL)
-                .header("Accept", "application/vnd.github+json")
-                .header("User-Agent", "YunX")
-                .get()
-                .build()
-            val body = client.newCall(request).execute().use { resp ->
-                if (!resp.isSuccessful) return@runCatching null
-                resp.body?.string() ?: return@runCatching null
-            }
-            val json = JSONObject(body)
-            val tag = json.optString("tag_name")
-            if (tag.isBlank()) return@runCatching null
-            val assets = buildList {
-                json.optJSONArray("assets")?.let { arr ->
-                    for (i in 0 until arr.length()) {
-                        val a = arr.optJSONObject(i) ?: continue
-                        add(Asset(a.optString("name"), a.optString("browser_download_url")))
+    suspend fun fetchLatestRelease(context: Context? = null): Release? = withContext(Dispatchers.IO) {
+        restoreState(context)
+        // 冷却期内不碰 API，直接走网页端点
+        if (System.currentTimeMillis() < rateLimitResetAt) {
+            return@withContext fetchViaWeb()
+        }
+        fetchViaApi(context) ?: fetchViaWeb()
+    }
+
+    // ------------------------------------------------------------------ REST API
+
+    private suspend fun fetchViaApi(context: Context?): Release? = runCatching {
+        val p = prefs(context)
+        val etag = p?.getString(KEY_ETAG, null) ?: memEtag
+        val builder = Request.Builder()
+            .url(RELEASES_LATEST_URL)
+            .header("Accept", "application/vnd.github+json")
+            .header("User-Agent", "YunX")
+        // 条件请求：服务端内容未变时返回 304，且 304 不计入限流额度
+        if (!etag.isNullOrBlank()) builder.header("If-None-Match", etag)
+
+        val client = HttpClients.apiClient()
+        client.newCall(builder.get().build()).execute().use { resp ->
+            val remaining = resp.header("X-RateLimit-Remaining")?.toLongOrNull()
+            val resetSec = resp.header("X-RateLimit-Reset")?.toLongOrNull()
+
+            when (resp.code) {
+                304 -> {
+                    // 内容未变化：直接复用上次缓存的完整响应
+                    val cached = p?.getString(KEY_CACHE, null) ?: memCache
+                    return@runCatching cached?.let { parseRelease(it) }
+                }
+                403 -> {
+                    // 额度耗尽（未认证 60 次/小时，移动网络/公司出口 IP 常被同网段占满）：
+                    // 记录重置时刻，冷却期内改走网页端点
+                    if (remaining == 0L && resetSec != null) {
+                        rateLimitResetAt = resetSec * 1000L + 5_000L
+                        p?.edit()?.putLong(KEY_RESET_AT, rateLimitResetAt)?.apply()
                     }
+                    return@runCatching null
+                }
+                404 -> return@runCatching null // 仓库尚未发布任何 Release
+            }
+            if (!resp.isSuccessful) return@runCatching null
+
+            val body = resp.body?.string()
+            if (body.isNullOrBlank()) return@runCatching null
+            val newEtag = resp.header("ETag")
+            memEtag = newEtag
+            memCache = body
+            p?.edit()?.let { editor ->
+                if (newEtag != null) editor.putString(KEY_ETAG, newEtag) else editor.remove(KEY_ETAG)
+                editor.putString(KEY_CACHE, body)
+                editor.remove(KEY_RESET_AT)
+            }?.apply()
+            parseRelease(body)
+        }
+    }.getOrNull()
+
+    private fun parseRelease(json: String): Release? = runCatching {
+        val obj = JSONObject(json)
+        val tag = obj.optString("tag_name")
+        if (tag.isBlank()) return@runCatching null
+        val assets = buildList {
+            obj.optJSONArray("assets")?.let { arr ->
+                for (i in 0 until arr.length()) {
+                    val a = arr.optJSONObject(i) ?: continue
+                    add(Asset(a.optString("name"), a.optString("browser_download_url")))
                 }
             }
-            Release(
-                tagName = tag,
-                body = json.optString("body"),
-                assets = assets,
-                publishedAt = json.optString("published_at")
-            )
-        }.getOrNull()
+        }
+        Release(
+            tagName = tag,
+            body = obj.optString("body"),
+            assets = assets,
+            publishedAt = obj.optString("published_at")
+        )
+    }.getOrNull()
+
+    // ------------------------------------------------------- 网页端点兜底（不限流）
+
+    /**
+     * 通过 github.com 网页端点获取最新 Release。
+     * Atom 源提供 tag 与更新说明，附件直链需要再取 expanded_assets 片段。
+     */
+    private suspend fun fetchViaWeb(): Release? = runCatching {
+        val atom = httpGet(RELEASES_ATOM_URL) ?: return@runCatching null
+        // 只取第一个 entry（Atom 按发布时间倒序，首个即最新 Release）；
+        // 多个 entry 时必须截断，否则后续标签解析会跨 entry 取到错误内容
+        val entry = atom.substringAfter("<entry>", "")
+            .substringBefore("</entry>", "")
+            .ifBlank { return@runCatching null }
+        // ★ <title> 是 Release **名称**（如 "YunX v1.3.0"），不是 tag，绝不能当 tag 用：
+        //   拿它拼 expanded_assets 会 404，且 compareVersions 会解析出 0 → 误判"无新版本"。
+        val tag = extractTag(entry) ?: return@runCatching null
+        val updated = entry.substringAfter("<updated>", "").substringBefore("</updated>").trim()
+        val content = entry.substringAfter("<content", "")
+            .substringAfter(">", "")
+            .substringBefore("</content>")
+        Release(
+            tagName = tag,
+            body = unescapeHtml(content).stripTags(),
+            assets = fetchAssetsFromWeb(tag),
+            publishedAt = updated
+        )
+    }.getOrNull()
+
+    /**
+     * 从 Atom entry 提取真正的 git tag，按可靠性降序取第一个非空结果：
+     * 1. `<link rel="alternate" href=".../releases/tag/<tag>>"` —— 权威来源
+     * 2. `<id>tag:github.com,2008:Repository/<id>/<tag></id>` —— 末段即 tag
+     * 3. 从 `<title>` 里正则抽取形如 `v1.3.0` 的版本号 —— Release 名称带前缀时的兜底
+     */
+    private fun extractTag(entry: String): String? {
+        val fromLink = entry.substringAfter("""href="https://github.com/$OWNER/$REPO/releases/tag/""", "")
+            .substringBefore("\"", "")
+            .trim()
+        if (fromLink.isNotBlank()) return fromLink
+
+        val fromId = entry.substringAfter("<id>", "")
+            .substringBefore("</id>", "")
+            .substringAfterLast('/', "")
+            .trim()
+        if (fromId.isNotBlank()) return fromId
+
+        val title = entry.substringAfter("<title>", "").substringBefore("</title>").trim()
+        return VERSION_IN_TEXT.find(title)?.value
     }
+
+    /** 文本中的版本号（带 v 前缀），用于从 Release 名称中兜底提取 */
+    private val VERSION_IN_TEXT = Regex("""v\d+(?:\.\d+)*""")
+
+    /**
+     * 归一化版本号：剥离 v 前缀、Release 名称前缀与后缀说明。
+     * 例如 "YunX v1.3.0" / "v1.3.0（预览）" → "1.3.0"，
+     * 避免非数字前缀导致 toIntOrNull() 变 0、把新版本误判为旧版本。
+     */
+    fun normalizeVersion(raw: String): String {
+        val s = raw.trim()
+        VERSION_IN_TEXT.find(s)?.value?.let { return it.trimStart('v') }
+        return s.trimStart('v', 'V').takeWhile { it.isDigit() || it == '.' }.trim('.')
+    }
+
+    /** 从网页片段解析 APK 直链：/xingmihai/YunX/releases/download/<tag>/<file>.apk */
+    private suspend fun fetchAssetsFromWeb(tag: String): List<Asset> = runCatching {
+        val html = httpGet(expandedAssetsUrl(tag)) ?: return@runCatching emptyList()
+        // 主匹配：完整 download 路径（带引号的 href）
+        val regex = Regex("href=\"/$OWNER/$REPO/releases/download/[^\"]+\\.apk\"")
+        val found = regex.findAll(html).mapNotNull { m ->
+            val path = m.value.substringAfter("href=\"").substringBefore("\"")
+            if (path.isBlank()) null else Asset(path.substringAfterLast('/'), "https://github.com$path")
+        }.toList()
+        if (found.isNotEmpty()) return@runCatching found
+        // 兜底：属性顺序/引号风格变化时，直接匹配 download 路径本身
+        Regex("/$OWNER/$REPO/releases/download/[^\"'\\s]+\\.apk").findAll(html).map { m ->
+            val path = m.value
+            Asset(path.substringAfterLast('/'), "https://github.com$path")
+        }.toList()
+    }.getOrDefault(emptyList())
+
+    private fun httpGet(url: String): String? = runCatching {
+        val request = Request.Builder()
+            .url(url)
+            .header("User-Agent", "YunX")
+            .get()
+            .build()
+        HttpClients.apiClient().newCall(request).execute().use { resp ->
+            if (!resp.isSuccessful) return@runCatching null
+            resp.body?.string()
+        }
+    }.getOrNull()
+
+    // ------------------------------------------------------------------ 状态持久化
+
+    private fun prefs(context: Context?) =
+        context?.applicationContext?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    private fun restoreState(context: Context?) {
+        if (stateRestored) return
+        val p = prefs(context) ?: return // context 为空时暂不恢复，下次带 context 调用再试
+        stateRestored = true
+        rateLimitResetAt = p.getLong(KEY_RESET_AT, 0L)
+        memEtag = p.getString(KEY_ETAG, null)
+        memCache = p.getString(KEY_CACHE, null)
+    }
+
+    private fun String.stripTags(): String =
+        replace(Regex("<[^>]+>"), "\n")
+            .replace(Regex("\n{3,}"), "\n\n")
+            .trim()
+
+    private fun unescapeHtml(s: String): String = s
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&amp;", "&")
 }
