@@ -343,17 +343,17 @@ object UpdateChecker {
         "</?(p|div|h[1-6]|li|ul|ol|blockquote|pre|tr|table|section)[^>]*>",
         RegexOption.IGNORE_CASE
     )
-    private val H_TAG = Regex("<h([1-6])[^>]*>(.*?)</h\\1>", RegexOption.DOT_MATCHES_ALL or RegexOption.IGNORE_CASE)
-    private val LI_TAG = Regex("<li[^>]*>(.*?)</li>", RegexOption.DOT_MATCHES_ALL or RegexOption.IGNORE_CASE)
+    private val H_TAG = Regex("<h([1-6])[^>]*>(.*?)</h\\1>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
+    private val LI_TAG = Regex("<li[^>]*>(.*?)</li>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
     private val QUOTE_BLOCK = Regex(
         "<blockquote[^>]*>(.*?)</blockquote>",
-        RegexOption.DOT_MATCHES_ALL or RegexOption.IGNORE_CASE
+        setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)
     )
-    private val STRONG = Regex("<(strong|b)[^>]*>(.*?)</\\1>", RegexOption.DOT_MATCHES_ALL or RegexOption.IGNORE_CASE)
-    private val EM = Regex("<(em|i)[^>]*>(.*?)</\\1>", RegexOption.DOT_MATCHES_ALL or RegexOption.IGNORE_CASE)
-    private val CODE_HTML = Regex("<code[^>]*>(.*?)</code>", RegexOption.DOT_MATCHES_ALL or RegexOption.IGNORE_CASE)
-    private val PRE_HTML = Regex("<pre[^>]*>(.*?)</pre>", RegexOption.DOT_MATCHES_ALL or RegexOption.IGNORE_CASE)
-    private val ANCHOR = Regex("<a\\s[^>]*href=\"([^\"]*)\"[^>]*>(.*?)</a>", RegexOption.DOT_MATCHES_ALL or RegexOption.IGNORE_CASE)
+    private val STRONG = Regex("<(strong|b)[^>]*>(.*?)</\\1>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
+    private val EM = Regex("<(em|i)[^>]*>(.*?)</\\1>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
+    private val CODE_HTML = Regex("<code[^>]*>(.*?)</code>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
+    private val PRE_HTML = Regex("<pre[^>]*>(.*?)</pre>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
+    private val ANCHOR = Regex("<a\\s[^>]*href=\"([^\"]*)\"[^>]*>(.*?)</a>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
     private val HR_HTML = Regex("<hr\\s*/?>", RegexOption.IGNORE_CASE)
     private val BR_HTML = Regex("<br\\s*/?>", RegexOption.IGNORE_CASE)
 
