@@ -119,20 +119,37 @@ jobs:
           fi
           echo "签名校验通过：xingmihai.jks (alias=$KA)"
 
-      - name: 上传 Debug APK
-        if: github.event.inputs.build_type != 'release'
-        uses: actions/upload-artifact@v4
-        with:
-          name: YunX-${{ steps.version.outputs.name }}-debug
-          path: app/build/outputs/apk/debug/*.apk
-          compression-level: 0
+      - name: 整理产物文件名
+        run: |
+          set -e
+          VERSION="${{ steps.version.outputs.name }}"
+          mkdir -p dist
+          # 统一命名为 YunX-<version>-<type>.apk：跨版本下载不会混淆，
+          # 也让 App 端挑选 APK 退化为可靠的字符串匹配。
+          if [ "${{ github.event.inputs.build_type }}" != "debug" ]; then
+            cp app-release-signed.apk "dist/YunX-${VERSION}-release.apk"
+          fi
+          if [ "${{ github.event.inputs.build_type }}" != "release" ]; then
+            cp "$(find app/build/outputs/apk/debug -name '*.apk' | head -1)" "dist/YunX-${VERSION}-debug.apk"
+          fi
+          ls -l dist
 
+      # ★ 先上传 release 再上传 debug：GitHub 按上传顺序返回 assets，
+      #   App 端 preferredApk 已能正确挑选，但顺序正确可再降一层风险
       - name: 上传 Release APK
         if: github.event.inputs.build_type != 'debug'
         uses: actions/upload-artifact@v4
         with:
           name: YunX-${{ steps.version.outputs.name }}-release
-          path: app-release-signed.apk
+          path: dist/YunX-${{ steps.version.outputs.name }}-release.apk
+          compression-level: 0
+
+      - name: 上传 Debug APK
+        if: github.event.inputs.build_type != 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: YunX-${{ steps.version.outputs.name }}-debug
+          path: dist/YunX-${{ steps.version.outputs.name }}-debug.apk
           compression-level: 0
 
       - name: 创建 GitHub Release
@@ -145,5 +162,5 @@ jobs:
           name: v${{ steps.version.outputs.name }}
           generate_release_notes: true
           files: |
-            app/build/outputs/apk/debug/*.apk
-            app-release-signed.apk
+            dist/YunX-${{ steps.version.outputs.name }}-release.apk
+            dist/YunX-${{ steps.version.outputs.name }}-debug.apk
