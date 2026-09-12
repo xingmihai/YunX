@@ -28,8 +28,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.layout.width
+// 注意：此处**不要**导入 androidx.compose.foundation.layout.weight ——
+// Modifier.weight 是 RowScope / ColumnScope 的**成员扩展函数**，
+// 在 Row { } / Column { } 的作用域内可直接调用，无需任何 import；
+// 强行导入会命中同包下的内部声明 RowColumnParentData.weight，
+// 报 "Cannot access ... it is internal in file"。
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CheckCircle
