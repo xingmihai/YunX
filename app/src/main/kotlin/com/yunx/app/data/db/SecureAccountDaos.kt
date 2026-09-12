@@ -68,7 +68,7 @@ internal object SecureAccountDaos {
         override fun observeAccounts(): Flow<List<UCAccountEntity>> = raw.observeAccounts().map { list ->
             // 在 suspend 上下文中逐项解密；list.map 的普通 lambda 里不能调 suspend 函数
             val result = ArrayList<UCAccountEntity>(list.size)
-            for (item in list) decryptUC(raw, cipher, item)?.let { result.add(it) }
+            for (item in list) decryptUc(raw, cipher, item)?.let { result.add(it) }
             result
         }
         override suspend fun setActive(id: String) = raw.setActive(id)
