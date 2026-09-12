@@ -51,7 +51,9 @@ class QuarkAccountRepository(
             sinkScope.launch {
                 dao.getAccount()?.let { acc ->
                     if (acc.cookie != merged) {
-                        dao.insertAsActive(acc.copy(cookie = merged, updatedAt = System.currentTimeMillis()))
+                        // 仅更新凭证，不切换生效账号（多账号下这里若用 insertAsActive，
+                        // 会把“刷新 cookie”变成“切换账号”）
+                        dao.upsert(acc.copy(cookie = merged, updatedAt = System.currentTimeMillis()))
                     }
                 }
             }
@@ -110,9 +112,11 @@ class QuarkAccountRepository(
     suspend fun saveQuarkAccount(cookie: String): Boolean {
         if (!QuarkConstants.isValidCookie(cookie)) return false
         val nickname = api.fetchNickname(cookie) ?: "夸克用户"
-        dao.upsert(
+        dao.insertAsActive(
             QuarkAccountEntity(
-                id = AccountIds.fromCredential("quark", cookie),
+                // 优先复用同昵称账号的行：cookie 会被服务端轮换，
+                // 若每次登录都用完整 cookie 派生 id，轮换后重登会多出一行
+                id = AccountIds.resolve("quark", cookie, nickname, "夸克用户", dao::findIdByNickname),
                 cookie = cookie,
                 nickname = nickname
             )

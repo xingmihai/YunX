@@ -41,61 +41,6 @@ internal object SecureAccountDaos {
         }
         override suspend fun getAccount(): QuarkAccountEntity? = raw.getAccount()?.let { decryptQuark(raw, cipher, it) }
         override suspend fun clear() = raw.clear()
-    }
-
-    fun uc(raw: UCAccountDao, cipher: CredentialCipher): UCAccountDao = object : UCAccountDao {
-        override fun observeAccount(): Flow<UCAccountEntity?> = raw.observeAccount().map { value ->
-            value?.let { decryptUc(raw, cipher, it) }
-        }
-        override suspend fun upsert(account: UCAccountEntity) = withContext(Dispatchers.IO) {
-            raw.upsert(encryptUc(cipher, account))
-        }
-        override suspend fun getAccount(): UCAccountEntity? = raw.getAccount()?.let { decryptUc(raw, cipher, it) }
-        override suspend fun clear() = raw.clear()
-    }
-
-    fun baidu(raw: BaiduAccountDao, cipher: CredentialCipher): BaiduAccountDao = object : BaiduAccountDao {
-        override fun observeAccount(): Flow<BaiduAccountEntity?> = raw.observeAccount().map { value ->
-            value?.let { decryptBaidu(raw, cipher, it) }
-        }
-        override suspend fun upsert(account: BaiduAccountEntity) = withContext(Dispatchers.IO) {
-            raw.upsert(encryptBaidu(cipher, account))
-        }
-        override suspend fun getAccount(): BaiduAccountEntity? = raw.getAccount()?.let { decryptBaidu(raw, cipher, it) }
-        override suspend fun clear() = raw.clear()
-    }
-
-    fun c139(raw: C139AccountDao, cipher: CredentialCipher): C139AccountDao = object : C139AccountDao {
-        override fun observeAccount(): Flow<C139AccountEntity?> = raw.observeAccount().map { value ->
-            value?.let { decryptC139(raw, cipher, it) }
-        }
-        override suspend fun upsert(account: C139AccountEntity) = withContext(Dispatchers.IO) {
-            raw.upsert(encryptC139(cipher, account))
-        }
-        override suspend fun getAccount(): C139AccountEntity? = raw.getAccount()?.let { decryptC139(raw, cipher, it) }
-        override suspend fun clear() = raw.clear()
-    }
-
-    fun pan123(raw: Pan123AccountDao, cipher: CredentialCipher): Pan123AccountDao = object : Pan123AccountDao {
-        override fun observeAccount(): Flow<Pan123AccountEntity?> = raw.observeAccount().map { value ->
-            value?.let { decryptPan123(raw, cipher, it) }
-        }
-        override suspend fun upsert(account: Pan123AccountEntity) = withContext(Dispatchers.IO) {
-            raw.upsert(encryptPan123(cipher, account))
-        }
-        override suspend fun getAccount(): Pan123AccountEntity? = raw.getAccount()?.let { decryptPan123(raw, cipher, it) }
-        override suspend fun clear() = raw.clear()
-    }
-
-    fun xunlei(raw: XunleiAccountDao, cipher: CredentialCipher): XunleiAccountDao = object : XunleiAccountDao {
-        override fun observeAccount(): Flow<XunleiAccountEntity?> = raw.observeAccount().map { value ->
-            value?.let { decryptXunlei(raw, cipher, it) }
-        }
-        override suspend fun upsert(account: XunleiAccountEntity) = withContext(Dispatchers.IO) {
-            raw.upsert(encryptXunlei(cipher, account))
-        }
-        override suspend fun getAccount(): XunleiAccountEntity? = raw.getAccount()?.let { decryptXunlei(raw, cipher, it) }
-        override suspend fun clear() = raw.clear()
         override fun observeAccounts(): Flow<List<QuarkAccountEntity>> = raw.observeAccounts().map { list ->
             // 在 suspend 上下文中逐项解密；list.map 的普通 lambda 里不能调 suspend 函数
             val result = ArrayList<QuarkAccountEntity>(list.size)
@@ -108,6 +53,18 @@ internal object SecureAccountDaos {
         override suspend fun deleteById(id: String) = raw.deleteById(id)
         override suspend fun countActive(): Int = raw.countActive()
         override suspend fun firstId(): String? = raw.firstId()
+        override suspend fun findIdByNickname(nickname: String): String? = raw.findIdByNickname(nickname)
+    }
+
+    fun uc(raw: UCAccountDao, cipher: CredentialCipher): UCAccountDao = object : UCAccountDao {
+        override fun observeAccount(): Flow<UCAccountEntity?> = raw.observeAccount().map { value ->
+            value?.let { decryptUc(raw, cipher, it) }
+        }
+        override suspend fun upsert(account: UCAccountEntity) = withContext(Dispatchers.IO) {
+            raw.upsert(encryptUc(cipher, account))
+        }
+        override suspend fun getAccount(): UCAccountEntity? = raw.getAccount()?.let { decryptUc(raw, cipher, it) }
+        override suspend fun clear() = raw.clear()
         override fun observeAccounts(): Flow<List<UCAccountEntity>> = raw.observeAccounts().map { list ->
             // 在 suspend 上下文中逐项解密；list.map 的普通 lambda 里不能调 suspend 函数
             val result = ArrayList<UCAccountEntity>(list.size)
@@ -120,6 +77,18 @@ internal object SecureAccountDaos {
         override suspend fun deleteById(id: String) = raw.deleteById(id)
         override suspend fun countActive(): Int = raw.countActive()
         override suspend fun firstId(): String? = raw.firstId()
+        override suspend fun findIdByNickname(nickname: String): String? = raw.findIdByNickname(nickname)
+    }
+
+    fun baidu(raw: BaiduAccountDao, cipher: CredentialCipher): BaiduAccountDao = object : BaiduAccountDao {
+        override fun observeAccount(): Flow<BaiduAccountEntity?> = raw.observeAccount().map { value ->
+            value?.let { decryptBaidu(raw, cipher, it) }
+        }
+        override suspend fun upsert(account: BaiduAccountEntity) = withContext(Dispatchers.IO) {
+            raw.upsert(encryptBaidu(cipher, account))
+        }
+        override suspend fun getAccount(): BaiduAccountEntity? = raw.getAccount()?.let { decryptBaidu(raw, cipher, it) }
+        override suspend fun clear() = raw.clear()
         override fun observeAccounts(): Flow<List<BaiduAccountEntity>> = raw.observeAccounts().map { list ->
             // 在 suspend 上下文中逐项解密；list.map 的普通 lambda 里不能调 suspend 函数
             val result = ArrayList<BaiduAccountEntity>(list.size)
@@ -132,6 +101,18 @@ internal object SecureAccountDaos {
         override suspend fun deleteById(id: String) = raw.deleteById(id)
         override suspend fun countActive(): Int = raw.countActive()
         override suspend fun firstId(): String? = raw.firstId()
+        override suspend fun findIdByNickname(nickname: String): String? = raw.findIdByNickname(nickname)
+    }
+
+    fun c139(raw: C139AccountDao, cipher: CredentialCipher): C139AccountDao = object : C139AccountDao {
+        override fun observeAccount(): Flow<C139AccountEntity?> = raw.observeAccount().map { value ->
+            value?.let { decryptC139(raw, cipher, it) }
+        }
+        override suspend fun upsert(account: C139AccountEntity) = withContext(Dispatchers.IO) {
+            raw.upsert(encryptC139(cipher, account))
+        }
+        override suspend fun getAccount(): C139AccountEntity? = raw.getAccount()?.let { decryptC139(raw, cipher, it) }
+        override suspend fun clear() = raw.clear()
         override fun observeAccounts(): Flow<List<C139AccountEntity>> = raw.observeAccounts().map { list ->
             // 在 suspend 上下文中逐项解密；list.map 的普通 lambda 里不能调 suspend 函数
             val result = ArrayList<C139AccountEntity>(list.size)
@@ -144,6 +125,18 @@ internal object SecureAccountDaos {
         override suspend fun deleteById(id: String) = raw.deleteById(id)
         override suspend fun countActive(): Int = raw.countActive()
         override suspend fun firstId(): String? = raw.firstId()
+        override suspend fun findIdByNickname(nickname: String): String? = raw.findIdByNickname(nickname)
+    }
+
+    fun pan123(raw: Pan123AccountDao, cipher: CredentialCipher): Pan123AccountDao = object : Pan123AccountDao {
+        override fun observeAccount(): Flow<Pan123AccountEntity?> = raw.observeAccount().map { value ->
+            value?.let { decryptPan123(raw, cipher, it) }
+        }
+        override suspend fun upsert(account: Pan123AccountEntity) = withContext(Dispatchers.IO) {
+            raw.upsert(encryptPan123(cipher, account))
+        }
+        override suspend fun getAccount(): Pan123AccountEntity? = raw.getAccount()?.let { decryptPan123(raw, cipher, it) }
+        override suspend fun clear() = raw.clear()
         override fun observeAccounts(): Flow<List<Pan123AccountEntity>> = raw.observeAccounts().map { list ->
             // 在 suspend 上下文中逐项解密；list.map 的普通 lambda 里不能调 suspend 函数
             val result = ArrayList<Pan123AccountEntity>(list.size)
@@ -156,6 +149,18 @@ internal object SecureAccountDaos {
         override suspend fun deleteById(id: String) = raw.deleteById(id)
         override suspend fun countActive(): Int = raw.countActive()
         override suspend fun firstId(): String? = raw.firstId()
+        override suspend fun findIdByNickname(nickname: String): String? = raw.findIdByNickname(nickname)
+    }
+
+    fun xunlei(raw: XunleiAccountDao, cipher: CredentialCipher): XunleiAccountDao = object : XunleiAccountDao {
+        override fun observeAccount(): Flow<XunleiAccountEntity?> = raw.observeAccount().map { value ->
+            value?.let { decryptXunlei(raw, cipher, it) }
+        }
+        override suspend fun upsert(account: XunleiAccountEntity) = withContext(Dispatchers.IO) {
+            raw.upsert(encryptXunlei(cipher, account))
+        }
+        override suspend fun getAccount(): XunleiAccountEntity? = raw.getAccount()?.let { decryptXunlei(raw, cipher, it) }
+        override suspend fun clear() = raw.clear()
         override fun observeAccounts(): Flow<List<XunleiAccountEntity>> = raw.observeAccounts().map { list ->
             // 在 suspend 上下文中逐项解密；list.map 的普通 lambda 里不能调 suspend 函数
             val result = ArrayList<XunleiAccountEntity>(list.size)
@@ -168,6 +173,7 @@ internal object SecureAccountDaos {
         override suspend fun deleteById(id: String) = raw.deleteById(id)
         override suspend fun countActive(): Int = raw.countActive()
         override suspend fun firstId(): String? = raw.firstId()
+        override suspend fun findIdByNickname(nickname: String): String? = raw.findIdByNickname(nickname)
     }
 
     private suspend fun decryptQuark(raw: QuarkAccountDao, cipher: CredentialCipher, stored: QuarkAccountEntity): QuarkAccountEntity? =

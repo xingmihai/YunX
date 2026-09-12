@@ -174,7 +174,8 @@ class AuthBackupManager(
                     if (c.isNotBlank()) {
                         quarkDao.insertAsActive(
                             QuarkAccountEntity(
-                                id = AccountIds.fromCredential("quark", c), cookie = c,
+                                id = AccountIds.resolve("quark", c,
+                                    obj.optString("nickname"), "夸克用户", quarkDao::findIdByNickname), cookie = c,
                                 nickname = obj.optString("nickname"),
                                 updatedAt = obj.optLong("updatedAt", System.currentTimeMillis())
                             )
@@ -186,7 +187,8 @@ class AuthBackupManager(
                     if (c.isNotBlank()) {
                         ucDao.insertAsActive(
                             UCAccountEntity(
-                                id = AccountIds.fromCredential("uc", c), cookie = c,
+                                id = AccountIds.resolve("uc", c,
+                                    obj.optString("nickname"), "UC用户", ucDao::findIdByNickname), cookie = c,
                                 nickname = obj.optString("nickname"),
                                 updatedAt = obj.optLong("updatedAt", System.currentTimeMillis())
                             )
@@ -198,7 +200,8 @@ class AuthBackupManager(
                     if (t.isNotBlank()) {
                         xunleiDao.insertAsActive(
                             XunleiAccountEntity(
-                                id = AccountIds.fromCredential("xunlei", t), accessToken = t,
+                                id = AccountIds.resolve("xunlei", t,
+                                    obj.optString("nickname"), "迅雷用户", xunleiDao::findIdByNickname), accessToken = t,
                                 refreshToken = obj.optString("refreshToken"),
                                 deviceId = obj.optString("deviceId"),
                                 captchaToken = obj.optString("captchaToken"),
@@ -213,7 +216,8 @@ class AuthBackupManager(
                     if (c.isNotBlank()) {
                         baiduDao.insertAsActive(
                             BaiduAccountEntity(
-                                id = AccountIds.fromCredential("baidu", c), cookie = c,
+                                id = AccountIds.resolve("baidu", c,
+                                    obj.optString("nickname"), "百度用户", baiduDao::findIdByNickname), cookie = c,
                                 nickname = obj.optString("nickname"),
                                 updatedAt = obj.optLong("updatedAt", System.currentTimeMillis())
                             )
@@ -225,7 +229,8 @@ class AuthBackupManager(
                     if (c.isNotBlank()) {
                         c139Dao.insertAsActive(
                             C139AccountEntity(
-                                id = AccountIds.fromCredential("c139", c), cookie = c,
+                                id = AccountIds.resolve("c139", c,
+                                    obj.optString("nickname"), "139用户", c139Dao::findIdByNickname), cookie = c,
                                 authorization = obj.optString("authorization"),
                                 nickname = obj.optString("nickname"),
                                 updatedAt = obj.optLong("updatedAt", System.currentTimeMillis())
@@ -238,7 +243,8 @@ class AuthBackupManager(
                     if (t.isNotBlank()) {
                         pan123Dao.insertAsActive(
                             Pan123AccountEntity(
-                                id = AccountIds.fromCredential("pan123", t), accessToken = t,
+                                id = AccountIds.resolve("pan123", t,
+                                    obj.optString("nickname"), "123云盘用户", pan123Dao::findIdByNickname), accessToken = t,
                                 account = obj.optString("account"),
                                 nickname = obj.optString("nickname"),
                                 updatedAt = obj.optLong("updatedAt", System.currentTimeMillis())

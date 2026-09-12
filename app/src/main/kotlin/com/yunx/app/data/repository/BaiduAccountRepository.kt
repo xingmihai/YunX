@@ -70,7 +70,9 @@ class BaiduAccountRepository(
         val nickname = api.fetchNickname(cookie) ?: "百度用户"
         dao.insertAsActive(
             BaiduAccountEntity(
-                id = AccountIds.fromCredential("baidu", cookie),
+                // 优先复用同昵称账号的行：凭证会被服务端轮换，
+                // 若每次登录都用完整凭证派生 id，轮换后重登会多出一行
+                id = AccountIds.resolve("baidu", cookie, nickname, "百度用户", dao::findIdByNickname),
                 cookie = cookie,
                 nickname = nickname
             )

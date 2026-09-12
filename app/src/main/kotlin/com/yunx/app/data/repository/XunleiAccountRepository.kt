@@ -74,14 +74,17 @@ class XunleiAccountRepository(
         // 换 token 前先 initCaptcha 拿 captcha_token（官方时序：smslogin → captcha/init → signin/token）
         val captchaToken = api.initCaptcha(deviceId, mobile) ?: ""
         val tokens = api.exchangeToken(step.sessionId, deviceId, captchaToken) ?: return false
+        val nickname = step.nickname.ifBlank { "迅雷用户" }
         dao.insertAsActive(
             XunleiAccountEntity(
-                id = AccountIds.fromCredential("xunlei", tokens.second),
+                // 优先复用同昵称账号的行：凭证会被服务端轮换，
+                // 若每次登录都用完整凭证派生 id，轮换后重登会多出一行
+                id = AccountIds.resolve("xunlei", tokens.second, nickname, "迅雷用户", dao::findIdByNickname),
                 accessToken = tokens.first,
                 refreshToken = tokens.second,
                 deviceId = deviceId,
                 captchaToken = captchaToken,
-                nickname = step.nickname.ifBlank { "迅雷用户" }
+                nickname = nickname
             )
         )
         return true
@@ -96,14 +99,17 @@ class XunleiAccountRepository(
         val deviceId = XunleiApi.newDeviceId()
         val captchaToken = api.initCaptcha(deviceId, username) ?: ""
         val tokens = api.exchangeToken(step.sessionId, deviceId, captchaToken) ?: return false
+        val nickname = step.nickname.ifBlank { "迅雷用户" }
         dao.insertAsActive(
             XunleiAccountEntity(
-                id = AccountIds.fromCredential("xunlei", tokens.second),
+                // 优先复用同昵称账号的行：凭证会被服务端轮换，
+                // 若每次登录都用完整凭证派生 id，轮换后重登会多出一行
+                id = AccountIds.resolve("xunlei", tokens.second, nickname, "迅雷用户", dao::findIdByNickname),
                 accessToken = tokens.first,
                 refreshToken = tokens.second,
                 deviceId = deviceId,
                 captchaToken = captchaToken,
-                nickname = step.nickname.ifBlank { "迅雷用户" }
+                nickname = nickname
             )
         )
         return true

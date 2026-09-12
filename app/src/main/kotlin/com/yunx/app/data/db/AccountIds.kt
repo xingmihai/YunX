@@ -40,6 +40,38 @@ object AccountIds {
      * @param platform 平台标识（如 "quark"），用于隔离：不同平台即便凭证相同也不会撞 id
      * @param secret 该账号的稳定凭证（cookie / refreshToken / accessToken）
      */
+    /**
+     * 登录落库时决定这一行该用哪个 id。
+     *
+     * 优先复用**同昵称**的已有账号，其次才用凭证 hash 派生。
+     *
+     * ★ 为什么必须复用：两个场景会产生重复行，都靠它兜住
+     *   1. v14→v15 迁移保留了旧主键（"quark" / "uc" 等写死常量）。
+     *      升级后重登同一账号，若直接用 hash 派生 id，会插成第二行，
+     *      而迁移过来的那行还在 —— 切换器里出现重复的孤立账号。
+     *   2. cookie 会被服务端轮换（如夸克 __puus）。id 若基于完整 cookie 派生，
+     *      轮换后重登同样算出新 id，多出一行。
+     *
+     * 昵称是账号的**人眼标识**，不随会话轮换，因此用它判断"是不是同一个账号"。
+     *
+     * @param nickname 刚拉取到的昵称
+     * @param fallbackNickname 拉取失败时的占位名；等于它时不做匹配
+     *        （否则所有"昵称获取失败"的账号会互相覆盖成同一行）
+     * @param findByNickname 查询已有账号 id 的挂起函数（由 DAO 提供）
+     */
+    suspend fun resolve(
+        platform: String,
+        secret: String,
+        nickname: String,
+        fallbackNickname: String,
+        findByNickname: suspend (String) -> String?
+    ): String {
+        if (nickname.isNotBlank() && nickname != fallbackNickname) {
+            findByNickname(nickname)?.let { return it }
+        }
+        return fromCredential(platform, secret)
+    }
+
     fun fromCredential(platform: String, secret: String): String {
         // 凭证为空时不参与 hash，否则所有空凭证账号会挤在同一行
         val material = if (secret.isBlank()) {

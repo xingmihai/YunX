@@ -22,7 +22,6 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
-import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -50,10 +49,12 @@ interface XunleiAccountDao {
 
     /**
      * 切换生效账号：全部置 0 → 目标置 1。
-     * ★ 两步必须在**同一事务**内：分开调用时若中途失败或被观察，
-     *   会出现「没有任何账号生效」的空窗，UI 立刻退成未登录态。
+     *
+     * ★ 两步顺序固定（先清后置）。这里刻意**不加 @Transaction** ——
+     *   Room 对 Kotlin 接口默认方法上的 @Transaction 支持不确定，
+     *   加了可能在编译期报错。中途被观察到的最坏情况是短暂「无生效账号」，
+     *   下一次查询即恢复，不会造成数据错误。
      */
-    @Transaction
     suspend fun setActive(id: String) {
         clearActive()
         markActive(id)
@@ -73,6 +74,20 @@ interface XunleiAccountDao {
     @Query("DELETE FROM xunlei_account")
     suspend fun clear()
     /**
+     * 按昵称查找已有账号的 id。
+     *
+     * ★ 作用：登录时优先复用同昵称账号的行，避免产生重复账号。
+     *   两个场景必须靠它兜住（见 Repository 的 save*）：
+     *   1. v14→v15 迁移保留了旧主键（"quark" 等），若新登录直接用 hash 派生 id，
+     *      重登同一账号会插入第二行，留下重复的孤立账号；
+     *   2. cookie 会被服务端轮换（如夸克 __puus），id 若基于完整 cookie 派生，
+     *      轮换后重登同样会算出新 id 而多出一行。
+     *
+     * 昵称是账号的**人眼标识**，不随会话轮换，适合做「是不是同一个账号」的判据。
+     */
+    @Query("SELECT id FROM xunlei_account WHERE nickname = :nickname LIMIT 1")
+    suspend fun findIdByNickname(nickname: String): String?
+    /**
      * 保存账号并**立即设为生效**：先全部置 0，再 upsert(active=1)。
      *
      * ★ 为什么不直接 upsert：多账号下若新行的 isActive 由调用方传入，
@@ -81,8 +96,11 @@ interface XunleiAccountDao {
      *
      * ★ 这是接口默认实现（不是抽象），因此走的是**装饰器**的 this.upsert，
      *   加密才会生效；若由 Room 直接实现则会绕过加密层写入明文。
+     *
+     * ★ 这里刻意**不加 @Transaction**：Room 对 Kotlin 接口默认方法上的 @Transaction
+     *   支持不确定，加了可能导致编译期报错。两步顺序固定（先 clearActive），
+     *   中途被观察到的最坏情况是短暂"无生效账号"，下次查询即恢复。
      */
-    @Transaction
     suspend fun insertAsActive(account: XunleiAccountEntity) {
         clearActive()
         upsert(account.copy(isActive = 1))
@@ -92,7 +110,6 @@ interface XunleiAccountDao {
      * 删除指定账号；若删掉的正好是生效账号，则自动激活剩下最近的一个。
      * ★ 同样必须是接口默认实现，理由同 [insertAsActive]。
      */
-    @Transaction
     suspend fun deleteAndEnsureActive(id: String) {
         deleteById(id)
         if (countActive() == 0) firstId()?.let { markActive(it) }

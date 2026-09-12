@@ -58,7 +58,9 @@ class Pan123AccountRepository(
         val nickname = api.fetchNickname(t) ?: return false
         dao.insertAsActive(
             Pan123AccountEntity(
-                id = AccountIds.fromCredential("pan123", token),
+                // 优先复用同昵称账号的行：凭证会被服务端轮换，
+                // 若每次登录都用完整凭证派生 id，轮换后重登会多出一行
+                id = AccountIds.resolve("pan123", token, nickname, "123云盘用户", dao::findIdByNickname),
                 accessToken = t,
                 account = "",
                 nickname = nickname
