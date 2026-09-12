@@ -42,6 +42,8 @@ jobs:
       # ★ 正式发版必须配置：否则 APK 内的更新检测会回退官方 github.com，
       #   国内用户大概率连不上，表现为「检查更新失败」。
       EDGE_PROXY_PASS: ${{ secrets.EDGE_PROXY_PASS }}
+      # 动态凭证 secret（推荐）：优先于上面的静态凭证，每小时派生一次
+      EDGE_DYNAMIC_SECRET: ${{ secrets.EDGE_DYNAMIC_SECRET }}
 
     steps:
       - name: 检出代码

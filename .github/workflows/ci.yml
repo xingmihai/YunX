@@ -15,6 +15,8 @@ jobs:
       # edge 加速站访问密码（编译期注入 BuildConfig，不进仓库）。
       # Secrets 缺失时为空 → UpdateChecker 自动回退官方 github.com，构建不会失败。
       EDGE_PROXY_PASS: ${{ secrets.EDGE_PROXY_PASS }}
+      # 动态凭证 secret（推荐）：优先于上面的静态凭证，每小时派生一次
+      EDGE_DYNAMIC_SECRET: ${{ secrets.EDGE_DYNAMIC_SECRET }}
 
     steps:
       - name: Checkout code

@@ -26,6 +26,9 @@ import com.yunx.app.data.network.HttpClients
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.Request
+import java.nio.charset.StandardCharsets
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 
 /**
  * GitHub Release 更新检测 —— **只走 edge 加速镜像的网页端点，不用 REST API**。
@@ -55,15 +58,51 @@ object UpdateChecker {
     private const val GITHUB_BASE = "https://github.com/$OWNER/$REPO"
 
     /**
-     * 加速站访问密码，来自 `BuildConfig.EDGE_PROXY_PASS`（编译期注入，不进仓库）。
-     *
-     * ★ 见 app/build.gradle.kts 中 edgeProxyPass 的说明：本地取自 local.properties，
-     *   CI 取自仓库 Secrets。为空表示未配置，此时回退官方地址。
+     * 加速站**静态**凭证，来自 `BuildConfig.EDGE_PROXY_PASS`（编译期注入，不进仓库）。
+     * 见 app/build.gradle.kts 中 edgeProxyPass 的说明。
      */
     private val proxyPass: String get() = BuildConfig.EDGE_PROXY_PASS
 
-    /** 实际使用的基址：配了密码走加速镜像，否则回退官方 GitHub */
-    private val baseUrl: String get() = if (proxyPass.isBlank()) GITHUB_BASE else EDGE_BASE
+    /**
+     * 加速站**动态凭证的 secret**，来自 `BuildConfig.EDGE_DYNAMIC_SECRET`。
+     * 见 app/build.gradle.kts 中 edgeDynamicSecret 的说明。优先于静态凭证。
+     */
+    private val dynamicSecret: String get() = BuildConfig.EDGE_DYNAMIC_SECRET
+
+    /** 是否走加速站：两类凭证至少配了一个 */
+    private val useEdge: Boolean get() = dynamicSecret.isNotBlank() || proxyPass.isNotBlank()
+
+    /** 实际使用的基址：配了凭证走加速镜像，否则回退官方 GitHub */
+    private val baseUrl: String get() = if (useEdge) EDGE_BASE else GITHUB_BASE
+
+    // ---------------------------------------------- 动态凭证（与 edge-gh 必须一致）
+
+    /** 时间窗口长度（秒）。改动必须与 edge-gh 的 WINDOW_SECONDS 保持同步，否则全部校验失败 */
+    private const val DYNAMIC_WINDOW_SECONDS = 3600L
+
+    /** 取 HMAC hex 的前 N 位。对应 edge-gh 的 TOKEN_LEN */
+    private const val DYNAMIC_TOKEN_LEN = 20
+
+    /** HMAC 消息前缀。对应 edge-gh 的 DYNAMIC_MSG */
+    private const val DYNAMIC_MSG_PREFIX = "yunx-edge:"
+
+    /**
+     * 由 secret 与当前时间窗口派生凭证：`HMAC-SHA256(secret, "yunx-edge:" + window)`。
+     *
+     * ★ 依赖设备时钟：手机默认走 NTP，误差极小。服务端接受当前窗口及前后各一个，
+     *   因此偏差在 ±1 小时内都能通过。若用户手动把时间改错超过 1 小时会校验失败，
+     *   此时表现为「检查更新失败」，不会崩溃。
+     */
+    private fun dynamicToken(secret: String, window: Long): String {
+        val mac = Mac.getInstance("HmacSHA256")
+        mac.init(SecretKeySpec(secret.toByteArray(StandardCharsets.UTF_8), "HmacSHA256"))
+        val sig = mac.doFinal("$DYNAMIC_MSG_PREFIX$window".toByteArray(StandardCharsets.UTF_8))
+        return sig.joinToString("") { "%02x".format(it.toInt() and 0xFF) }.take(DYNAMIC_TOKEN_LEN)
+    }
+
+    /** Basic Auth 头：`Basic base64(user:secret)`，用户名任意（服务端只校验冒号后部分） */
+    private fun basicHeader(secret: String): String =
+        "Basic " + Base64.encodeToString("yunx:$secret".toByteArray(), Base64.NO_WRAP)
 
     /** Release Atom 源 */
     private val releasesAtomUrl: String get() = "$baseUrl/releases.atom"
@@ -80,15 +119,19 @@ object UpdateChecker {
      *   对 APK 下载这类大文件尤其不可靠。Basic Auth 每次请求都带，无状态、最稳。
      *   用户名任意（服务端只校验冒号后的密码部分）。
      */
-    private fun authHeader(): String? {
-        val pass = proxyPass
-        if (pass.isBlank()) return null
-        return "Basic " + Base64.encodeToString("yunx:$pass".toByteArray(), Base64.NO_WRAP)
+    private fun authHeader(): String? = when {
+        // 动态优先：即使同时配置了静态凭证，也用动态（会过期，暴露窗口更小）
+        dynamicSecret.isNotBlank() -> {
+            val window = System.currentTimeMillis() / 1000L / DYNAMIC_WINDOW_SECONDS
+            basicHeader(dynamicToken(dynamicSecret, window))
+        }
+        proxyPass.isNotBlank() -> basicHeader(proxyPass)
+        else -> null
     }
 
     /**
      * 下载 APK 时需要携带的请求头（供 DownloadManager.enqueue 使用）。
-     * 走加速站时是 Authorization，未配置时为空 Map。
+     * 走加速站时是 Authorization（动态或静态凭证），未配置时为空 Map。
      */
     fun downloadAuthHeaders(): Map<String, String> =
         authHeader()?.let { mapOf("Authorization" to it) } ?: emptyMap()

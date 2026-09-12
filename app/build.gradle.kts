@@ -102,6 +102,29 @@ val edgeProxyPass: String = run {
     (fromFile ?: System.getenv("EDGE_PROXY_PASS")).orEmpty().trim()
 }
 
+/**
+ * edge 加速站**动态凭证的 secret**（推荐方式，见下方说明）。
+ *
+ * ── 为什么用动态凭证 ──────────────────────────────────────────
+ * 静态凭证一旦编译进 APK 就永久有效：被人从包里抠出来后可无限期使用。
+ * 动态凭证由 App 用 `HMAC-SHA256(secret, "yunx-edge:" + 时间窗口)` 自行派生，
+ * 每小时变化一次。即便被抓包或写进日志，最多 3 小时后自动失效
+ * （服务端接受当前窗口及前后各一个，因此单条最长 3 小时）。
+ *
+ * ── 它不能防什么 ──────────────────────────────────────────────
+ * secret 仍在 APK 内，反编译同样能拿到 —— 拿到 secret 的人可以算出任意时刻
+ * 的凭证。客户端程序对此无解，动态化只是把「泄露即永久」变成「泄露会过期」。
+ *
+ * 取值优先级同 edgeProxyPass：local.properties → 环境变量 → 空串。
+ * 为空时回退静态凭证（EDGE_PROXY_PASS），两者都为空则回退官方 github.com。
+ */
+val edgeDynamicSecret: String = run {
+    val fromFile = rootProject.file("local.properties").takeIf { it.exists() }?.let { f ->
+        Properties().apply { f.inputStream().use { load(it) } }.getProperty("EDGE_DYNAMIC_SECRET")
+    }
+    (fromFile ?: System.getenv("EDGE_DYNAMIC_SECRET")).orEmpty().trim()
+}
+
 android {
     namespace = "com.yunx.app"
     compileSdk = 36
@@ -113,11 +136,17 @@ android {
         versionCode = versionCodeInt
         versionName = versionNameStr
 
-        // edge 加速站密码（见上方 edgeProxyPass 的说明）。值需转义后嵌入生成的 Java 字面量
+        // edge 加速站凭证（见上方 edgeProxyPass / edgeDynamicSecret 的说明）。
+        // 值需转义后嵌入生成的 Java 字面量
         buildConfigField(
             "String",
             "EDGE_PROXY_PASS",
             "\"" + edgeProxyPass.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+        )
+        buildConfigField(
+            "String",
+            "EDGE_DYNAMIC_SECRET",
+            "\"" + edgeDynamicSecret.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
         )
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
