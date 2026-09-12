@@ -24,6 +24,7 @@ import com.yunx.app.data.db.Pan123AccountDao
 import com.yunx.app.data.db.Pan123AccountEntity
 import com.yunx.app.data.network.Pan123Api
 import kotlinx.coroutines.flow.Flow
+import com.yunx.app.data.db.AccountIds
 
 /**
  * 123 云盘账号仓库：网页登录（yun.123pan.cn 的 localStorage authorToken）→ JWT 落库。
@@ -38,6 +39,14 @@ class Pan123AccountRepository(
     fun observeAccount(): Flow<Pan123AccountEntity?> = dao.observeAccount()
 
     suspend fun getAccount(): Pan123AccountEntity? = dao.getAccount()
+    /** 本平台全部已保存账号（最近更新的在前），用于账号切换列表 */
+    fun observeAccounts(): Flow<List<Pan123AccountEntity>> = dao.observeAccounts()
+
+    /** 切换生效账号：此后该平台的 API 请求都使用它的凭证 */
+    suspend fun switchAccount(id: String) = dao.setActive(id)
+
+    /** 删除指定账号；若删掉的正好是生效账号，自动激活剩余最近的一个 */
+    suspend fun removeAccount(id: String) = dao.deleteAndEnsureActive(id)
 
     /**
      * 网页登录凭证（authorToken）校验并落库：先用 user/info 接口确认 token 有效并取昵称，成功返回 true。
@@ -48,9 +57,11 @@ class Pan123AccountRepository(
         if (t.isBlank()) return false
         // 网页登录拿不到手机号：account 留空，账号页展示时回退昵称
         val nickname = api.fetchNickname(t) ?: return false
-        dao.upsert(
+        dao.insertAsActive(
             Pan123AccountEntity(
-                id = "pan123",
+                // 优先复用同昵称账号的行：凭证会被服务端轮换，
+                // 若每次登录都用完整凭证派生 id，轮换后重登会多出一行
+                id = AccountIds.resolve("pan123", token, nickname, "123云盘用户", dao::findIdByNickname),
                 accessToken = t,
                 account = "",
                 nickname = nickname
@@ -81,6 +92,10 @@ class Pan123AccountRepository(
         }
         // 清 localStorage/DOM 存储：authorToken 就存在这里
         runCatching { WebStorage.getInstance().deleteAllData() }
-        dao.clear()
+        // ★ 多账号：只退出**当前生效**账号，其余已保存账号保留。
+        //   单账号时代 clear() 与"删当前账号"等价；多账号下 clear() 会清空整表，
+        //   用户点一次"退出登录"就会丢掉所有账号，属于静默数据丢失。
+        //   删除后 Repository 会自动激活剩余最近的一个。
+        dao.getAccount()?.let { dao.deleteAndEnsureActive(it.id) }
     }
 }

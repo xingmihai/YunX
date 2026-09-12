@@ -84,7 +84,13 @@ import java.util.Locale
 @Composable
 fun Pan123AccountSheet(
     account: Pan123AccountEntity,
+    /** 本平台全部已保存账号（多账号共存，用于切换） */
+    accounts: List<Pan123AccountEntity>,
     onLogout: () -> Unit,
+    /** 切换生效账号 */
+    onSwitch: (String) -> Unit,
+    /** 删除指定账号 */
+    onRemove: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -245,6 +251,24 @@ fun Pan123AccountSheet(
                         }
                     }
                 }
+            }
+
+            // 账号切换：多账号共存时列出全部账号
+            if (accounts.size > 1) {
+                AccountSwitcherSection(
+                    items = accounts.map {
+                        AccountSwitchItem(
+                            id = it.id,
+                            title = accountTitle(it.nickname, "123云盘"),
+                            subtitle = formatAccountTime(it.updatedAt),
+                            isActive = it.isActive == 1
+                        )
+                    },
+                    platformName = "123云盘",
+                    onSwitch = onSwitch,
+                    onRemove = onRemove
+                )
+                Spacer(modifier = Modifier.height(24.dp))
             }
 
             Spacer(modifier = Modifier.height(24.dp))

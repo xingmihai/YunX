@@ -29,6 +29,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.yunx.app.data.db.AccountIds
 
 /**
  * UC 账号数据仓库：Room 持久化 + 网络验证 + __puus 会话刷新（与夸克同源，修复取链/直链过期失败）。
@@ -52,6 +53,8 @@ class UCAccountRepository(
             sinkScope.launch {
                 dao.getAccount()?.let { acc ->
                     if (acc.cookie != merged) {
+                        // 仅更新凭证，不切换生效账号（多账号下这里若用 insertAsActive，
+                        // 会把“刷新 cookie”变成“切换账号”）
                         dao.upsert(acc.copy(cookie = merged, updatedAt = System.currentTimeMillis()))
                     }
                 }
@@ -62,6 +65,14 @@ class UCAccountRepository(
     fun observeAccount(): Flow<UCAccountEntity?> = dao.observeAccount()
 
     suspend fun getAccount(): UCAccountEntity? = dao.getAccount()
+    /** 本平台全部已保存账号（最近更新的在前），用于账号切换列表 */
+    fun observeAccounts(): Flow<List<UCAccountEntity>> = dao.observeAccounts()
+
+    /** 切换生效账号：此后该平台的 API 请求都使用它的凭证 */
+    suspend fun switchAccount(id: String) = dao.setActive(id)
+
+    /** 删除指定账号；若删掉的正好是生效账号，自动激活剩余最近的一个 */
+    suspend fun removeAccount(id: String) = dao.deleteAndEnsureActive(id)
 
     /**
      * 返回「保证 __puus 未过期」的 Cookie（取链/下载前调用）：
@@ -89,15 +100,21 @@ class UCAccountRepository(
                 CookieManager.getInstance().flush()
             }
         }
-        dao.clear()
+        // ★ 多账号：只退出**当前生效**账号，其余已保存账号保留。
+        //   单账号时代 clear() 与"删当前账号"等价；多账号下 clear() 会清空整表，
+        //   用户点一次"退出登录"就会丢掉所有账号，属于静默数据丢失。
+        //   删除后 Repository 会自动激活剩余最近的一个。
+        dao.getAccount()?.let { dao.deleteAndEnsureActive(it.id) }
     }
 
     suspend fun saveUCAccount(cookie: String): Boolean {
         if (!UCConstants.isValidCookie(cookie)) return false
         val nickname = api.fetchNickname(cookie) ?: "UC用户"
-        dao.upsert(
+        dao.insertAsActive(
             UCAccountEntity(
-                id = "uc",
+                // 优先复用同昵称账号的行：cookie 会被服务端轮换，
+                // 若每次登录都用完整 cookie 派生 id，轮换后重登会多出一行
+                id = AccountIds.resolve("uc", cookie, nickname, "UC用户", dao::findIdByNickname),
                 cookie = cookie,
                 nickname = nickname
             )

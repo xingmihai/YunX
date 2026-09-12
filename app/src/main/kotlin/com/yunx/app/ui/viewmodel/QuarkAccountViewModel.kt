@@ -42,9 +42,27 @@ class QuarkAccountViewModel(
             initialValue = null
         )
 
+    /** 本平台已保存的全部账号（用于切换列表） */
+    val quarkAccounts: StateFlow<List<QuarkAccountEntity>> = repository.observeAccounts()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = emptyList()
+        )
+
     /** 保存夸克 Cookie；返回是否保存成功 */
     suspend fun saveQuarkAccount(cookie: String): Boolean =
         repository.saveQuarkAccount(cookie)
+
+    /** 切换到指定账号 */
+    fun switchAccount(id: String) {
+        viewModelScope.launch { repository.switchAccount(id) }
+    }
+
+    /** 删除指定账号 */
+    fun removeAccount(id: String) {
+        viewModelScope.launch { repository.removeAccount(id) }
+    }
 
     /** 退出登录：清除本地 Cookie */
     fun logout() {

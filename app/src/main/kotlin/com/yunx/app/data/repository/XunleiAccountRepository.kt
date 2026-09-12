@@ -23,6 +23,7 @@ import com.yunx.app.data.db.XunleiAccountEntity
 import com.yunx.app.data.network.XunleiApi
 import com.yunx.app.data.network.XunleiLoginStep
 import kotlinx.coroutines.flow.Flow
+import com.yunx.app.data.db.AccountIds
 
 /**
  * 迅雷账号仓库：账号+密码登录（可能触发短信验证）→ 换 token 落库。
@@ -35,6 +36,14 @@ class XunleiAccountRepository(
     fun observeAccount(): Flow<XunleiAccountEntity?> = dao.observeAccount()
 
     suspend fun getAccount(): XunleiAccountEntity? = dao.getAccount()
+    /** 本平台全部已保存账号（最近更新的在前），用于账号切换列表 */
+    fun observeAccounts(): Flow<List<XunleiAccountEntity>> = dao.observeAccounts()
+
+    /** 切换生效账号：此后该平台的 API 请求都使用它的凭证 */
+    suspend fun switchAccount(id: String) = dao.setActive(id)
+
+    /** 删除指定账号；若删掉的正好是生效账号，自动激活剩余最近的一个 */
+    suspend fun removeAccount(id: String) = dao.deleteAndEnsureActive(id)
 
     /** 账号密码登录；返回登录步骤（needSms=true 表示需短信验证，携带 smsCreditKey/smsToken） */
     suspend fun loginWithPassword(
@@ -66,14 +75,17 @@ class XunleiAccountRepository(
         // 换 token 前先 initCaptcha 拿 captcha_token（官方时序：smslogin → captcha/init → signin/token）
         val captchaToken = api.initCaptcha(deviceId, mobile) ?: ""
         val tokens = api.exchangeToken(step.sessionId, deviceId, captchaToken) ?: return false
-        dao.upsert(
+        val nickname = step.nickname.ifBlank { "迅雷用户" }
+        dao.insertAsActive(
             XunleiAccountEntity(
-                id = "xunlei",
+                // 优先复用同昵称账号的行：凭证会被服务端轮换，
+                // 若每次登录都用完整凭证派生 id，轮换后重登会多出一行
+                id = AccountIds.resolve("xunlei", tokens.second, nickname, "迅雷用户", dao::findIdByNickname),
                 accessToken = tokens.first,
                 refreshToken = tokens.second,
                 deviceId = deviceId,
                 captchaToken = captchaToken,
-                nickname = step.nickname.ifBlank { "迅雷用户" }
+                nickname = nickname
             )
         )
         return true
@@ -88,14 +100,17 @@ class XunleiAccountRepository(
         val deviceId = XunleiApi.newDeviceId()
         val captchaToken = api.initCaptcha(deviceId, username) ?: ""
         val tokens = api.exchangeToken(step.sessionId, deviceId, captchaToken) ?: return false
-        dao.upsert(
+        val nickname = step.nickname.ifBlank { "迅雷用户" }
+        dao.insertAsActive(
             XunleiAccountEntity(
-                id = "xunlei",
+                // 优先复用同昵称账号的行：凭证会被服务端轮换，
+                // 若每次登录都用完整凭证派生 id，轮换后重登会多出一行
+                id = AccountIds.resolve("xunlei", tokens.second, nickname, "迅雷用户", dao::findIdByNickname),
                 accessToken = tokens.first,
                 refreshToken = tokens.second,
                 deviceId = deviceId,
                 captchaToken = captchaToken,
-                nickname = step.nickname.ifBlank { "迅雷用户" }
+                nickname = nickname
             )
         )
         return true
@@ -108,6 +123,10 @@ class XunleiAccountRepository(
     }
 
     suspend fun logout() {
-        dao.clear()
+        // ★ 多账号：只退出**当前生效**账号，其余已保存账号保留。
+        //   单账号时代 clear() 与"删当前账号"等价；多账号下 clear() 会清空整表，
+        //   用户点一次"退出登录"就会丢掉所有账号，属于静默数据丢失。
+        //   删除后 Repository 会自动激活剩余最近的一个。
+        dao.getAccount()?.let { dao.deleteAndEnsureActive(it.id) }
     }
 }

@@ -42,11 +42,29 @@ class C139AccountViewModel(
             initialValue = null
         )
 
+    /** 本平台已保存的全部账号（用于切换列表） */
+    val c139Accounts: StateFlow<List<C139AccountEntity>> = repository.observeAccounts()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = emptyList()
+        )
+
     /** 保存 139 Cookie；返回是否保存成功 */
     suspend fun saveC139Account(cookie: String): Boolean =
         repository.saveC139Account(cookie)
 
     /** 退出登录：清除本地 Cookie */
+    /** 切换到指定账号 */
+    fun switchAccount(id: String) {
+        viewModelScope.launch { repository.switchAccount(id) }
+    }
+
+    /** 删除指定账号 */
+    fun removeAccount(id: String) {
+        viewModelScope.launch { repository.removeAccount(id) }
+    }
+
     fun logout() {
         viewModelScope.launch { repository.logoutC139() }
     }

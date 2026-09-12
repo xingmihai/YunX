@@ -84,7 +84,13 @@ import java.util.Locale
 @Composable
 fun BaiduAccountSheet(
     account: BaiduAccountEntity,
+    /** 本平台全部已保存账号（多账号共存，用于切换） */
+    accounts: List<BaiduAccountEntity>,
     onLogout: () -> Unit,
+    /** 切换生效账号 */
+    onSwitch: (String) -> Unit,
+    /** 删除指定账号 */
+    onRemove: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -247,6 +253,24 @@ fun BaiduAccountSheet(
                         }
                     }
                 }
+            }
+
+            // 账号切换：多账号共存时列出全部账号
+            if (accounts.size > 1) {
+                AccountSwitcherSection(
+                    items = accounts.map {
+                        AccountSwitchItem(
+                            id = it.id,
+                            title = accountTitle(it.nickname, "百度"),
+                            subtitle = formatAccountTime(it.updatedAt),
+                            isActive = it.isActive == 1
+                        )
+                    },
+                    platformName = "百度",
+                    onSwitch = onSwitch,
+                    onRemove = onRemove
+                )
+                Spacer(modifier = Modifier.height(24.dp))
             }
 
             Spacer(modifier = Modifier.height(24.dp))

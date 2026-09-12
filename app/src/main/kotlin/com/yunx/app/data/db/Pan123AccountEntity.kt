@@ -29,12 +29,24 @@ import androidx.room.PrimaryKey
  */
 @Entity(tableName = "pan123_account")
 data class Pan123AccountEntity(
+    /**
+     * 账号唯一标识：**cookie 的稳定 hash**（见各 Repository 的 save*），不再写死为 "pan123"。
+     *
+     * ★ 为什么改：写死常量意味着一张表只能存一行，登录第二个账号会直接覆盖第一个，
+     *   也就无从"切换"。改成内容派生后 —— 同一 cookie 重复登录仍是同一行（覆盖更新，
+     *   符合预期），不同账号则各行其是。
+     */
     @PrimaryKey
-    val id: String = "pan123",
+    val id: String = "",
     /** Bearer JWT（ResolveViewModel.currentCredential 返回，作为 repository 的 cookie 参数） */
     val accessToken: String = "",
     /** 登录账号（网页登录拿不到手机号，留空；账号页展示时回退昵称） */
     val account: String = "",
     val nickname: String = "",
-    val updatedAt: Long = System.currentTimeMillis()
+    val updatedAt: Long = System.currentTimeMillis(),
+    /**
+     * 是否为当前生效账号（1 = 生效）。同一平台内**至多一行**为 1。
+     * 旧数据经 14→15 迁移后，原本唯一的那行置为 1，行为不变。
+     */
+    val isActive: Int = 0
 )

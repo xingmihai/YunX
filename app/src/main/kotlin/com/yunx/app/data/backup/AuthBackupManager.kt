@@ -24,6 +24,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import com.yunx.app.data.db.AccountIds
 import com.yunx.app.data.db.BaiduAccountDao
 import com.yunx.app.data.db.BaiduAccountEntity
 import com.yunx.app.data.db.C139AccountDao
@@ -171,9 +172,10 @@ class AuthBackupManager(
                 "quark" -> {
                     val c = obj.optString("cookie")
                     if (c.isNotBlank()) {
-                        quarkDao.upsert(
+                        quarkDao.insertAsActive(
                             QuarkAccountEntity(
-                                id = "quark", cookie = c,
+                                id = AccountIds.resolve("quark", c,
+                                    obj.optString("nickname"), "夸克用户", quarkDao::findIdByNickname), cookie = c,
                                 nickname = obj.optString("nickname"),
                                 updatedAt = obj.optLong("updatedAt", System.currentTimeMillis())
                             )
@@ -183,9 +185,10 @@ class AuthBackupManager(
                 "uc" -> {
                     val c = obj.optString("cookie")
                     if (c.isNotBlank()) {
-                        ucDao.upsert(
+                        ucDao.insertAsActive(
                             UCAccountEntity(
-                                id = "uc", cookie = c,
+                                id = AccountIds.resolve("uc", c,
+                                    obj.optString("nickname"), "UC用户", ucDao::findIdByNickname), cookie = c,
                                 nickname = obj.optString("nickname"),
                                 updatedAt = obj.optLong("updatedAt", System.currentTimeMillis())
                             )
@@ -195,9 +198,10 @@ class AuthBackupManager(
                 "xunlei" -> {
                     val t = obj.optString("accessToken")
                     if (t.isNotBlank()) {
-                        xunleiDao.upsert(
+                        xunleiDao.insertAsActive(
                             XunleiAccountEntity(
-                                id = "xunlei", accessToken = t,
+                                id = AccountIds.resolve("xunlei", t,
+                                    obj.optString("nickname"), "迅雷用户", xunleiDao::findIdByNickname), accessToken = t,
                                 refreshToken = obj.optString("refreshToken"),
                                 deviceId = obj.optString("deviceId"),
                                 captchaToken = obj.optString("captchaToken"),
@@ -210,9 +214,10 @@ class AuthBackupManager(
                 "baidu" -> {
                     val c = obj.optString("cookie")
                     if (c.isNotBlank()) {
-                        baiduDao.upsert(
+                        baiduDao.insertAsActive(
                             BaiduAccountEntity(
-                                id = "baidu", cookie = c,
+                                id = AccountIds.resolve("baidu", c,
+                                    obj.optString("nickname"), "百度用户", baiduDao::findIdByNickname), cookie = c,
                                 nickname = obj.optString("nickname"),
                                 updatedAt = obj.optLong("updatedAt", System.currentTimeMillis())
                             )
@@ -222,9 +227,10 @@ class AuthBackupManager(
                 "c139" -> {
                     val c = obj.optString("cookie")
                     if (c.isNotBlank()) {
-                        c139Dao.upsert(
+                        c139Dao.insertAsActive(
                             C139AccountEntity(
-                                id = "c139", cookie = c,
+                                id = AccountIds.resolve("c139", c,
+                                    obj.optString("nickname"), "139用户", c139Dao::findIdByNickname), cookie = c,
                                 authorization = obj.optString("authorization"),
                                 nickname = obj.optString("nickname"),
                                 updatedAt = obj.optLong("updatedAt", System.currentTimeMillis())
@@ -235,9 +241,10 @@ class AuthBackupManager(
                 "pan123" -> {
                     val t = obj.optString("accessToken")
                     if (t.isNotBlank()) {
-                        pan123Dao.upsert(
+                        pan123Dao.insertAsActive(
                             Pan123AccountEntity(
-                                id = "pan123", accessToken = t,
+                                id = AccountIds.resolve("pan123", t,
+                                    obj.optString("nickname"), "123云盘用户", pan123Dao::findIdByNickname), accessToken = t,
                                 account = obj.optString("account"),
                                 nickname = obj.optString("nickname"),
                                 updatedAt = obj.optLong("updatedAt", System.currentTimeMillis())
