@@ -20,6 +20,8 @@ package com.yunx.app.data.db
 
 import com.yunx.app.data.security.CredentialCipher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
@@ -32,6 +34,24 @@ import kotlinx.coroutines.withContext
  * AndroidKeyStore（Binder IPC，单次 30~75ms）→ 网盘页下拉刷新时 6 平台并发把主线程占死 400~500ms → 全应用掉帧。
  */
 internal object SecureAccountDaos {
+    /**
+     * 账号表**写操作**的串行化锁。
+     *
+     * ★ 为什么需要：切换/保存/删除都是「先清除全部 isActive，再置目标为 1」的多步操作。
+     *   若两个登录（或恢复/导入）并发执行，两步之间会交错，最终可能留下
+     *   **多行 isActive = 1**，破坏「同平台至多一个生效账号」的不变量，
+     *   后果是请求用错账号的凭证。
+     *
+     * ★ 为什么不用 @Transaction：Room 对 Kotlin 接口**默认方法**上的 @Transaction
+     *   支持不确定，加了可能编译期报错。改在装饰器层用协程 Mutex 串行化，
+     *   效果等价且不依赖 Room 的行为。
+     *
+     * ★ 为什么一把全局锁而不是每平台一把：这些操作极低频（登录/切换/删除），
+     *   跨平台的短暂互斥代价可忽略；一把锁反而避免了"每平台一把锁"的
+     *   实例管理问题（装饰器可能被创建多次，锁就失效了）。
+     */
+    private val mutationMutex = Mutex()
+
     fun quark(raw: QuarkAccountDao, cipher: CredentialCipher): QuarkAccountDao = object : QuarkAccountDao {
         override fun observeAccount(): Flow<QuarkAccountEntity?> = raw.observeAccount().map { value ->
             value?.let { decryptQuark(raw, cipher, it) }
@@ -41,13 +61,29 @@ internal object SecureAccountDaos {
         }
         override suspend fun getAccount(): QuarkAccountEntity? = raw.getAccount()?.let { decryptQuark(raw, cipher, it) }
         override suspend fun clear() = raw.clear()
+        /**
+         * 覆盖接口默认实现，改为持锁串行执行。
+         * ★ 必须在这里覆盖：默认实现调用的是 **this** 的方法，
+         *   若由 Room 直接执行则拿不到这把锁，也无法保证写入前经过加密。
+         */
+        override suspend fun insertAsActive(account: QuarkAccountEntity) = mutationMutex.withLock {
+            clearActive()
+            upsert(account.copy(isActive = 1))
+        }
+        override suspend fun setActive(id: String) = mutationMutex.withLock {
+            clearActive()
+            markActive(id)
+        }
+        override suspend fun deleteAndEnsureActive(id: String) = mutationMutex.withLock {
+            deleteById(id)
+            if (countActive() == 0) firstId()?.let { markActive(it) }
+        }
         override fun observeAccounts(): Flow<List<QuarkAccountEntity>> = raw.observeAccounts().map { list ->
             // 在 suspend 上下文中逐项解密；list.map 的普通 lambda 里不能调 suspend 函数
             val result = ArrayList<QuarkAccountEntity>(list.size)
             for (item in list) decryptQuark(raw, cipher, item)?.let { result.add(it) }
             result
         }
-        override suspend fun setActive(id: String) = raw.setActive(id)
         override suspend fun clearActive() = raw.clearActive()
         override suspend fun markActive(id: String) = raw.markActive(id)
         override suspend fun deleteById(id: String) = raw.deleteById(id)
@@ -65,13 +101,29 @@ internal object SecureAccountDaos {
         }
         override suspend fun getAccount(): UCAccountEntity? = raw.getAccount()?.let { decryptUc(raw, cipher, it) }
         override suspend fun clear() = raw.clear()
+        /**
+         * 覆盖接口默认实现，改为持锁串行执行。
+         * ★ 必须在这里覆盖：默认实现调用的是 **this** 的方法，
+         *   若由 Room 直接执行则拿不到这把锁，也无法保证写入前经过加密。
+         */
+        override suspend fun insertAsActive(account: UCAccountEntity) = mutationMutex.withLock {
+            clearActive()
+            upsert(account.copy(isActive = 1))
+        }
+        override suspend fun setActive(id: String) = mutationMutex.withLock {
+            clearActive()
+            markActive(id)
+        }
+        override suspend fun deleteAndEnsureActive(id: String) = mutationMutex.withLock {
+            deleteById(id)
+            if (countActive() == 0) firstId()?.let { markActive(it) }
+        }
         override fun observeAccounts(): Flow<List<UCAccountEntity>> = raw.observeAccounts().map { list ->
             // 在 suspend 上下文中逐项解密；list.map 的普通 lambda 里不能调 suspend 函数
             val result = ArrayList<UCAccountEntity>(list.size)
             for (item in list) decryptUc(raw, cipher, item)?.let { result.add(it) }
             result
         }
-        override suspend fun setActive(id: String) = raw.setActive(id)
         override suspend fun clearActive() = raw.clearActive()
         override suspend fun markActive(id: String) = raw.markActive(id)
         override suspend fun deleteById(id: String) = raw.deleteById(id)
@@ -89,13 +141,29 @@ internal object SecureAccountDaos {
         }
         override suspend fun getAccount(): BaiduAccountEntity? = raw.getAccount()?.let { decryptBaidu(raw, cipher, it) }
         override suspend fun clear() = raw.clear()
+        /**
+         * 覆盖接口默认实现，改为持锁串行执行。
+         * ★ 必须在这里覆盖：默认实现调用的是 **this** 的方法，
+         *   若由 Room 直接执行则拿不到这把锁，也无法保证写入前经过加密。
+         */
+        override suspend fun insertAsActive(account: BaiduAccountEntity) = mutationMutex.withLock {
+            clearActive()
+            upsert(account.copy(isActive = 1))
+        }
+        override suspend fun setActive(id: String) = mutationMutex.withLock {
+            clearActive()
+            markActive(id)
+        }
+        override suspend fun deleteAndEnsureActive(id: String) = mutationMutex.withLock {
+            deleteById(id)
+            if (countActive() == 0) firstId()?.let { markActive(it) }
+        }
         override fun observeAccounts(): Flow<List<BaiduAccountEntity>> = raw.observeAccounts().map { list ->
             // 在 suspend 上下文中逐项解密；list.map 的普通 lambda 里不能调 suspend 函数
             val result = ArrayList<BaiduAccountEntity>(list.size)
             for (item in list) decryptBaidu(raw, cipher, item)?.let { result.add(it) }
             result
         }
-        override suspend fun setActive(id: String) = raw.setActive(id)
         override suspend fun clearActive() = raw.clearActive()
         override suspend fun markActive(id: String) = raw.markActive(id)
         override suspend fun deleteById(id: String) = raw.deleteById(id)
@@ -113,13 +181,29 @@ internal object SecureAccountDaos {
         }
         override suspend fun getAccount(): C139AccountEntity? = raw.getAccount()?.let { decryptC139(raw, cipher, it) }
         override suspend fun clear() = raw.clear()
+        /**
+         * 覆盖接口默认实现，改为持锁串行执行。
+         * ★ 必须在这里覆盖：默认实现调用的是 **this** 的方法，
+         *   若由 Room 直接执行则拿不到这把锁，也无法保证写入前经过加密。
+         */
+        override suspend fun insertAsActive(account: C139AccountEntity) = mutationMutex.withLock {
+            clearActive()
+            upsert(account.copy(isActive = 1))
+        }
+        override suspend fun setActive(id: String) = mutationMutex.withLock {
+            clearActive()
+            markActive(id)
+        }
+        override suspend fun deleteAndEnsureActive(id: String) = mutationMutex.withLock {
+            deleteById(id)
+            if (countActive() == 0) firstId()?.let { markActive(it) }
+        }
         override fun observeAccounts(): Flow<List<C139AccountEntity>> = raw.observeAccounts().map { list ->
             // 在 suspend 上下文中逐项解密；list.map 的普通 lambda 里不能调 suspend 函数
             val result = ArrayList<C139AccountEntity>(list.size)
             for (item in list) decryptC139(raw, cipher, item)?.let { result.add(it) }
             result
         }
-        override suspend fun setActive(id: String) = raw.setActive(id)
         override suspend fun clearActive() = raw.clearActive()
         override suspend fun markActive(id: String) = raw.markActive(id)
         override suspend fun deleteById(id: String) = raw.deleteById(id)
@@ -137,13 +221,29 @@ internal object SecureAccountDaos {
         }
         override suspend fun getAccount(): Pan123AccountEntity? = raw.getAccount()?.let { decryptPan123(raw, cipher, it) }
         override suspend fun clear() = raw.clear()
+        /**
+         * 覆盖接口默认实现，改为持锁串行执行。
+         * ★ 必须在这里覆盖：默认实现调用的是 **this** 的方法，
+         *   若由 Room 直接执行则拿不到这把锁，也无法保证写入前经过加密。
+         */
+        override suspend fun insertAsActive(account: Pan123AccountEntity) = mutationMutex.withLock {
+            clearActive()
+            upsert(account.copy(isActive = 1))
+        }
+        override suspend fun setActive(id: String) = mutationMutex.withLock {
+            clearActive()
+            markActive(id)
+        }
+        override suspend fun deleteAndEnsureActive(id: String) = mutationMutex.withLock {
+            deleteById(id)
+            if (countActive() == 0) firstId()?.let { markActive(it) }
+        }
         override fun observeAccounts(): Flow<List<Pan123AccountEntity>> = raw.observeAccounts().map { list ->
             // 在 suspend 上下文中逐项解密；list.map 的普通 lambda 里不能调 suspend 函数
             val result = ArrayList<Pan123AccountEntity>(list.size)
             for (item in list) decryptPan123(raw, cipher, item)?.let { result.add(it) }
             result
         }
-        override suspend fun setActive(id: String) = raw.setActive(id)
         override suspend fun clearActive() = raw.clearActive()
         override suspend fun markActive(id: String) = raw.markActive(id)
         override suspend fun deleteById(id: String) = raw.deleteById(id)
@@ -161,13 +261,29 @@ internal object SecureAccountDaos {
         }
         override suspend fun getAccount(): XunleiAccountEntity? = raw.getAccount()?.let { decryptXunlei(raw, cipher, it) }
         override suspend fun clear() = raw.clear()
+        /**
+         * 覆盖接口默认实现，改为持锁串行执行。
+         * ★ 必须在这里覆盖：默认实现调用的是 **this** 的方法，
+         *   若由 Room 直接执行则拿不到这把锁，也无法保证写入前经过加密。
+         */
+        override suspend fun insertAsActive(account: XunleiAccountEntity) = mutationMutex.withLock {
+            clearActive()
+            upsert(account.copy(isActive = 1))
+        }
+        override suspend fun setActive(id: String) = mutationMutex.withLock {
+            clearActive()
+            markActive(id)
+        }
+        override suspend fun deleteAndEnsureActive(id: String) = mutationMutex.withLock {
+            deleteById(id)
+            if (countActive() == 0) firstId()?.let { markActive(it) }
+        }
         override fun observeAccounts(): Flow<List<XunleiAccountEntity>> = raw.observeAccounts().map { list ->
             // 在 suspend 上下文中逐项解密；list.map 的普通 lambda 里不能调 suspend 函数
             val result = ArrayList<XunleiAccountEntity>(list.size)
             for (item in list) decryptXunlei(raw, cipher, item)?.let { result.add(it) }
             result
         }
-        override suspend fun setActive(id: String) = raw.setActive(id)
         override suspend fun clearActive() = raw.clearActive()
         override suspend fun markActive(id: String) = raw.markActive(id)
         override suspend fun deleteById(id: String) = raw.deleteById(id)
