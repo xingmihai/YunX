@@ -12,6 +12,9 @@ jobs:
     # CI访问阿里云镜像会 502：跳过国内镜像，直接走 Google/Maven Central 官方源
     env:
       YUNX_USE_MIRROR: "false"
+      # edge 加速站访问密码（编译期注入 BuildConfig，不进仓库）。
+      # Secrets 缺失时为空 → UpdateChecker 自动回退官方 github.com，构建不会失败。
+      EDGE_PROXY_PASS: ${{ secrets.EDGE_PROXY_PASS }}
 
     steps:
       - name: Checkout code

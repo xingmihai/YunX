@@ -732,7 +732,12 @@ fun MainScreen() {
                         backupManager = backupManager,
                         onDownloadUpdateApk = { url, name ->
                             scope.launch {
-                                downloadManager.enqueue(url = url, fileName = name)
+                                // 走加速站时需带 Basic Auth，否则 APK 下载会被 401 拦下
+                                downloadManager.enqueue(
+                                    url = url,
+                                    fileName = name,
+                                    headers = UpdateChecker.downloadAuthHeaders()
+                                )
                                 currentTab = MainTab.Download
                             }
                         }
@@ -906,7 +911,11 @@ fun MainScreen() {
                     val apk = UpdateChecker.preferredApk(release.assets)
                     if (apk != null) {
                         scope.launch {
-                            downloadManager.enqueue(url = apk.downloadUrl, fileName = apk.name)
+                            downloadManager.enqueue(
+                                url = apk.downloadUrl,
+                                fileName = apk.name,
+                                headers = UpdateChecker.downloadAuthHeaders()
+                            )
                             currentTab = MainTab.Download
                         }
                         SnackbarController.show("已加入下载，完成后点击「打开」即可安装")

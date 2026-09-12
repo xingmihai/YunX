@@ -20,6 +20,8 @@ package com.yunx.app.data.update
 
 import android.content.Context
 import android.os.Build
+import android.util.Base64
+import com.yunx.app.BuildConfig
 import com.yunx.app.data.network.HttpClients
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -49,11 +51,47 @@ object UpdateChecker {
     /** edge 加速镜像根地址：镜像站路径为「<前缀>/github.com/<owner>/<repo>」 */
     private const val EDGE_BASE = "https://edge.gh.xmhai.cn/github.com/$OWNER/$REPO"
 
+    /** 官方地址：仅在**未配置**加速站密码时作为回退，保证不因缺配置而失效 */
+    private const val GITHUB_BASE = "https://github.com/$OWNER/$REPO"
+
+    /**
+     * 加速站访问密码，来自 `BuildConfig.EDGE_PROXY_PASS`（编译期注入，不进仓库）。
+     *
+     * ★ 见 app/build.gradle.kts 中 edgeProxyPass 的说明：本地取自 local.properties，
+     *   CI 取自仓库 Secrets。为空表示未配置，此时回退官方地址。
+     */
+    private val proxyPass: String get() = BuildConfig.EDGE_PROXY_PASS
+
+    /** 实际使用的基址：配了密码走加速镜像，否则回退官方 GitHub */
+    private val baseUrl: String get() = if (proxyPass.isBlank()) GITHUB_BASE else EDGE_BASE
+
     /** Release Atom 源 */
-    private const val RELEASES_ATOM_URL = "$EDGE_BASE/releases.atom"
+    private val releasesAtomUrl: String get() = "$baseUrl/releases.atom"
 
     /** 指定 tag 的附件列表（GitHub 网页异步展开 assets 用的片段） */
-    private fun expandedAssetsUrl(tag: String) = "$EDGE_BASE/releases/expanded_assets/$tag"
+    private fun expandedAssetsUrl(tag: String) = "$baseUrl/releases/expanded_assets/$tag"
+
+    /**
+     * 加速站的 Basic Auth 头；未配置密码时返回 null（不发该头）。
+     *
+     * ★ 为什么用 Basic Auth 而不是 `?key=`：
+     *   `?key=` 命中后服务端返回 302 + Set-Cookie，要求客户端保存并回传 Cookie。
+     *   本项目 OkHttp 未配置 CookieJar（默认 NO_COOKIES），重定向后会丢掉凭证再次 401，
+     *   对 APK 下载这类大文件尤其不可靠。Basic Auth 每次请求都带，无状态、最稳。
+     *   用户名任意（服务端只校验冒号后的密码部分）。
+     */
+    private fun authHeader(): String? {
+        val pass = proxyPass
+        if (pass.isBlank()) return null
+        return "Basic " + Base64.encodeToString("yunx:$pass".toByteArray(), Base64.NO_WRAP)
+    }
+
+    /**
+     * 下载 APK 时需要携带的请求头（供 DownloadManager.enqueue 使用）。
+     * 走加速站时是 Authorization，未配置时为空 Map。
+     */
+    fun downloadAuthHeaders(): Map<String, String> =
+        authHeader()?.let { mapOf("Authorization" to it) } ?: emptyMap()
 
     data class Asset(
         val name: String,
@@ -172,7 +210,7 @@ object UpdateChecker {
      * Atom 源提供 tag 与更新说明，附件直链需要再取 expanded_assets 片段。
      */
     private suspend fun fetchViaAtom(): Release? = runCatching {
-        val atom = httpGet(RELEASES_ATOM_URL) ?: return@runCatching null
+        val atom = httpGet(releasesAtomUrl) ?: return@runCatching null
         // 只取第一个 entry（Atom 按发布时间倒序，首个即最新 Release）；
         // 多个 entry 时必须截断，否则后续标签解析会跨 entry 取到错误内容
         val entry = atom.substringAfter("<entry>", "")
@@ -265,7 +303,7 @@ object UpdateChecker {
             }
             Asset(
                 name = name,
-                downloadUrl = "$EDGE_BASE/releases/download/$tag/$name",
+                downloadUrl = "$baseUrl/releases/download/$tag/$name",
                 sizeBytes = bytes
             )
         }
@@ -273,7 +311,7 @@ object UpdateChecker {
             // 兜底：切块失败时退回全局匹配（此时拿不到体积）
             href.findAll(html).map { m ->
                 val name = m.value.substringAfterLast('/')
-                Asset(name, "$EDGE_BASE/releases/download/$tag/$name")
+                Asset(name, "$baseUrl/releases/download/$tag/$name")
             }.toList()
         }
     }.getOrDefault(emptyList())
@@ -282,6 +320,7 @@ object UpdateChecker {
         val request = Request.Builder()
             .url(url)
             .header("User-Agent", "YunX")
+            .apply { authHeader()?.let { header("Authorization", it) } }
             .get()
             .build()
         HttpClients.apiClient().newCall(request).execute().use { resp ->

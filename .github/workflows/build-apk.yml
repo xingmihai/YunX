@@ -38,6 +38,10 @@ jobs:
     # 项目默认走阿里云镜像，在 GitHub Actions 里会 502；设为 false 走 Google/Maven Central 官方源
     env:
       YUNX_USE_MIRROR: "false"
+      # edge 加速站访问密码（编译期注入 BuildConfig，不进仓库）。
+      # ★ 正式发版必须配置：否则 APK 内的更新检测会回退官方 github.com，
+      #   国内用户大概率连不上，表现为「检查更新失败」。
+      EDGE_PROXY_PASS: ${{ secrets.EDGE_PROXY_PASS }}
 
     steps:
       - name: 检出代码
